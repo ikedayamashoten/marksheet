@@ -43,13 +43,6 @@
   .note{font-size:12px;color:#999;margin-top:6px;}
   .prog{font-size:14px;color:var(--navy);margin-top:10px;}
   .score-edit{width:70px;}
-  /* 印刷用マークシート */
-  @media print{
-    body *{visibility:hidden;}
-    #sheetArea, #sheetArea *{visibility:visible;}
-    #sheetArea{position:absolute;left:0;top:0;width:100%;}
-    .noprint{display:none!important;}
-  }
 </style>
 </head>
 <body>
@@ -148,9 +141,6 @@
 </div>
 </div>
 
-<!-- 印刷用マークシート（画面外） -->
-<div id="sheetArea" style="position:absolute;left:-9999px;"></div>
-
 <script src="config.js"></script>
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -244,25 +234,42 @@ function printSheet(){
     }
     bubbles+=`<tr>${row}</tr>`;
   }
-  document.getElementById("sheetArea").innerHTML=`
-    <div style="font-family:'Yu Gothic';padding:30px;color:#000;">
-      <h2 style="text-align:center;margin-bottom:6px;">マークシート解答用紙</h2>
-      <p style="text-align:center;margin-bottom:16px;">${t.subject}　${t.test_name}</p>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
-        <tr>
-          <td style="border:1px solid #000;padding:10px;">ID：______________</td>
-          <td style="border:1px solid #000;padding:10px;">学年：${t.grade}</td>
-          <td style="border:1px solid #000;padding:10px;">クラス：${t.class_name}</td>
-        </tr>
-        <tr>
-          <td style="border:1px solid #000;padding:10px;">出席番号：__________</td>
-          <td style="border:1px solid #000;padding:10px;" colspan="2">氏名：________________________</td>
-        </tr>
-      </table>
-      <table style="border-collapse:collapse;font-size:13px;">${bubbles}</table>
-      <p style="margin-top:14px;font-size:11px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
-    </div>`;
-  window.print();
+  const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+    <title>マークシート ${t.subject} ${t.test_name}</title>
+    <style>
+      @page{margin:14mm;}
+      body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;padding:20px;}
+      table{border-collapse:collapse;}
+      .info{width:100%;margin-bottom:20px;font-size:14px;}
+      .info td{border:1px solid #000;padding:10px;}
+      .bubbles{font-size:13px;}
+      .bubbles td{border:1px solid #000;}
+      .printbtn{margin-bottom:16px;}
+      @media print{.printbtn{display:none;}}
+    </style></head><body>
+    <div class="printbtn">
+      <button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer;background:#1a2747;color:#fff;border:none;border-radius:8px;">この用紙を印刷／PDF保存する</button>
+      <span style="font-size:13px;color:#555;margin-left:10px;">※ プリンタの代わりに「PDFとして保存」を選ぶとPDF化できます</span>
+    </div>
+    <h2 style="text-align:center;margin:0 0 6px;">マークシート解答用紙</h2>
+    <p style="text-align:center;margin:0 0 16px;">${t.subject}　${t.test_name}</p>
+    <table class="info">
+      <tr>
+        <td>ID：______________</td>
+        <td>学年：${t.grade}</td>
+        <td>クラス：${t.class_name}</td>
+      </tr>
+      <tr>
+        <td>出席番号：__________</td>
+        <td colspan="2">氏名：________________________</td>
+      </tr>
+    </table>
+    <table class="bubbles">${bubbles}</table>
+    <p style="margin-top:14px;font-size:11px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
+    </body></html>`;
+  const w=window.open("","_blank");
+  if(!w){ alert("ポップアップがブロックされました。ブラウザのアドレス欄のブロック表示から、このサイトのポップアップを許可してください。"); return; }
+  w.document.open(); w.document.write(html); w.document.close();
 }
 
 /* ---------- テスト読み込み ---------- */
