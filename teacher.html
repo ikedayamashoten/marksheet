@@ -100,7 +100,7 @@
       <div id="preprintBox" class="hide" style="margin-top:10px;">
         <label>クラスの人数</label>
         <input type="number" id="f_numstudents" min="1" max="60" placeholder="例：40" style="max-width:200px;">
-        <p class="note">人数分（出席番号1番〜）のマークシートが1つのPDFにまとまって生成されます。各用紙に出席番号と12桁の専用IDが印字され、生徒は名前を書くだけになります。</p>
+        <p class="note">人数分（出席番号1番〜）のマークシートが1つのPDFにまとまって生成されます。各用紙に出席番号と16桁の専用IDが印字され、生徒は名前を書くだけになります。</p>
       </div>
     </div>
     <button class="btn-sub" onclick="buildAnswerKey()">正答の入力欄をつくる</button>
@@ -230,10 +230,10 @@ function togglePreprint(){
   document.getElementById("preprintBox").classList.toggle("hide",!on);
 }
 
-// 12桁の数字IDを生成（重複しにくいよう乱数ベース）
-function gen12digitId(){
+// 16桁の数字IDを生成（重複しにくいよう乱数ベース）
+function gen16digitId(){
   let s="";
-  for(let i=0;i<12;i++) s+=Math.floor(Math.random()*10);
+  for(let i=0;i<16;i++) s+=Math.floor(Math.random()*10);
   return s;
 }
 
@@ -257,13 +257,17 @@ async function saveTest(){
   SAVED_TEST=data; TESTS.unshift(data);
   SAVED_ROSTER=null;
 
-  // 事前印字モードなら、出席番号分の12桁IDを作って名簿に保存
+  // 事前印字モードなら、出席番号分の16桁IDを作って名簿に保存
   if(preprint){
+    // データベース全体で既に使われているIDを取得（重複を完全に避けるため）
+    const {data:existing, error:exErr}=await sb.from("roster").select("student_id");
+    if(exErr){ alert("既存IDの確認エラー: "+exErr.message); return; }
+    const used=new Set((existing||[]).map(r=>r.student_id));
+
     const rosterRows=[];
-    const used=new Set();
     for(let seat=1;seat<=numStudents;seat++){
-      let id=gen12digitId();
-      while(used.has(id)) id=gen12digitId();
+      let id=gen16digitId();
+      while(used.has(id)) id=gen16digitId();   // 全体＋今回分で重複しないIDになるまで作り直す
       used.add(id);
       rosterRows.push({test_id:data.id, school_id:SCHOOL.id, seat_number:seat, student_id:id});
     }
