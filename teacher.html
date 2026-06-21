@@ -92,6 +92,17 @@
         <select id="f_cnum"></select>
       </div>
     </div>
+    <div style="margin-top:14px;padding:14px;background:#f8f6ef;border-radius:8px;border:1px solid var(--line);">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="f_preprint" style="width:auto;" onchange="togglePreprint()">
+        <span style="font-weight:700;color:var(--navy);">出席番号と専用IDを用紙に事前印字する（記入不要にする）</span>
+      </label>
+      <div id="preprintBox" class="hide" style="margin-top:10px;">
+        <label>クラスの人数</label>
+        <input type="number" id="f_numstudents" min="1" max="60" placeholder="例：40" style="max-width:200px;">
+        <p class="note">人数分（出席番号1番〜）のマークシートが1つのPDFにまとまって生成されます。各用紙に出席番号と12桁の専用IDが印字され、生徒は名前を書くだけになります。</p>
+      </div>
+    </div>
     <button class="btn-sub" onclick="buildAnswerKey()">正答の入力欄をつくる</button>
   </div>
 
@@ -138,7 +149,7 @@
   <div class="card hide" id="resultCard">
     <h2 id="resultTitle">採点結果</h2>
     <table>
-      <thead><tr><th>出席番号</th><th>氏名</th><th>ID</th><th>得点</th><th>満点</th><th></th></tr></thead>
+      <thead><tr><th>学年</th><th>クラス</th><th>出席番号</th><th>氏名</th><th>ID</th><th>得点</th><th>満点</th><th></th></tr></thead>
       <tbody id="resultBody"></tbody>
     </table>
   </div>
@@ -214,25 +225,59 @@ function buildAnswerKey(){
   document.getElementById("akeyCard").classList.remove("hide");
 }
 
+function togglePreprint(){
+  const on=document.getElementById("f_preprint").checked;
+  document.getElementById("preprintBox").classList.toggle("hide",!on);
+}
+
+// 12桁の数字IDを生成（重複しにくいよう乱数ベース）
+function gen12digitId(){
+  let s="";
+  for(let i=0;i<12;i++) s+=Math.floor(Math.random()*10);
+  return s;
+}
+
 let SAVED_TEST=null;
+let SAVED_ROSTER=null;  // 事前印字モードのとき、出席番号→IDの配列
 async function saveTest(){
   for(const q in CUR_AKEY){ if(CUR_AKEY[q].length===0){ alert("第"+q+"問の正答が未選択です"); return; } }
+  const preprint=document.getElementById("f_preprint").checked;
+  const numStudents=preprint?+val("f_numstudents"):null;
+  if(preprint && (!numStudents||numStudents<1)){ alert("クラスの人数を入力してください"); return; }
+
   const rec={
     school_id:SCHOOL.id, grade:val("f_grade"), class_name:val("f_class"),
     subject:val("f_subject"), test_name:val("f_testname"),
     num_questions:+val("f_qnum"), num_choices:+document.getElementById("f_cnum").value,
-    answer_key:CUR_AKEY
+    answer_key:CUR_AKEY, use_preprint:preprint, num_students:numStudents
   };
   if(!rec.test_name){ alert("テスト名を入力してください"); return; }
   const {data,error}=await sb.from("tests").insert(rec).select().single();
   if(error){ alert("保存エラー: "+error.message); return; }
   SAVED_TEST=data; TESTS.unshift(data);
+  SAVED_ROSTER=null;
+
+  // 事前印字モードなら、出席番号分の12桁IDを作って名簿に保存
+  if(preprint){
+    const rosterRows=[];
+    const used=new Set();
+    for(let seat=1;seat<=numStudents;seat++){
+      let id=gen12digitId();
+      while(used.has(id)) id=gen12digitId();
+      used.add(id);
+      rosterRows.push({test_id:data.id, school_id:SCHOOL.id, seat_number:seat, student_id:id});
+    }
+    const {error:rErr}=await sb.from("roster").insert(rosterRows);
+    if(rErr){ alert("名簿の保存エラー: "+rErr.message); return; }
+    SAVED_ROSTER=rosterRows;
+  }
+
   alert("テストを保存しました。マークシート用紙を印刷できます。");
   document.getElementById("dlCard").classList.remove("hide");
 }
 
 /* ---------- マークシート印刷 ---------- */
-function printSheet(testArg){
+async function printSheet(testArg){
   const t=testArg || SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
   const labels="ABCDEFGHIJ".split("");
   const Q=t.num_questions, C=t.num_choices;
@@ -259,7 +304,7 @@ function printSheet(testArg){
     return `<tr>${cells}</tr>`;
   };
 
-  // 各列のテーブルを作る
+  // 設問部分（列分割済み）のHTMLを作る
   let colTables="";
   for(let col=0;col<cols;col++){
     const start=col*perCol+1;
@@ -268,6 +313,63 @@ function printSheet(testArg){
     let rows="";
     for(let q=start;q<=end;q++) rows+=makeRow(q);
     colTables+=`<div style="flex:0 0 auto;"><table style="border-collapse:collapse;font-size:${fs}px;">${rows}</table></div>`;
+  }
+
+  // 事前印字モードかどうかで、上部の記入欄を切り替える
+  // roster（名簿）を取得（事前印字テストのとき）
+  let seats=null;
+  if(t.use_preprint){
+    const {data:roster, error}=await sb.from("roster")
+      .select("seat_number,student_id").eq("test_id",t.id).order("seat_number");
+    if(error){ alert("名簿の取得エラー: "+error.message); return; }
+    if(!roster||roster.length===0){ alert("この事前印字テストの名簿が見つかりません。"); return; }
+    seats=roster;
+  }
+
+  // 1枚分の用紙HTMLを作る関数（seatがあれば事前印字、なければ手書き欄）
+  const makeSheet=(seat)=>{
+    let infoTop;
+    if(seat){
+      // 事前印字：ID・出席番号を印字、氏名のみ手書き
+      infoTop=`
+      <tr>
+        <td>ID：<b style="font-size:15px;letter-spacing:1px;">${seat.student_id}</b></td>
+        <td>学年：${t.grade}</td>
+        <td>クラス：${t.class_name}</td>
+      </tr>
+      <tr>
+        <td>出席番号：<b style="font-size:15px;">${seat.seat_number}</b></td>
+        <td colspan="2">氏名：________________________</td>
+      </tr>`;
+    }else{
+      // 手書き欄
+      infoTop=`
+      <tr>
+        <td>ID：______________</td>
+        <td>学年：${t.grade}</td>
+        <td>クラス：${t.class_name}</td>
+      </tr>
+      <tr>
+        <td>出席番号：__________</td>
+        <td colspan="2">氏名：________________________</td>
+      </tr>`;
+    }
+    return `
+      <div class="sheet">
+        <h2 style="text-align:center;margin:0 0 4px;font-size:18px;">マークシート解答用紙</h2>
+        <p style="text-align:center;margin:0 0 12px;font-size:14px;">${t.subject}　${t.test_name}</p>
+        <table class="info">${infoTop}</table>
+        <div class="cols">${colTables}</div>
+        <p style="margin-top:12px;font-size:11px;color:#555;text-align:center;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
+      </div>`;
+  };
+
+  // 全ページを組み立てる
+  let pages="";
+  if(seats){
+    seats.forEach(s=>{ pages+=makeSheet(s); });
+  }else{
+    pages=makeSheet(null);
   }
 
   const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
@@ -280,28 +382,16 @@ function printSheet(testArg){
       .info{width:100%;margin-bottom:14px;font-size:13px;}
       .info td{border:1px solid #000;padding:8px;}
       .cols{display:flex;flex-direction:row;justify-content:center;gap:18px;align-items:flex-start;}
+      .sheet{page-break-after:always;}
+      .sheet:last-child{page-break-after:auto;}
       .printbtn{margin-bottom:14px;}
       @media print{.printbtn{display:none;} body{padding:0;}}
     </style></head><body>
     <div class="printbtn">
       <button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer;background:#1a2747;color:#fff;border:none;border-radius:8px;">この用紙を印刷／PDF保存する</button>
-      <span style="font-size:13px;color:#555;margin-left:10px;">※ プリンタの代わりに「PDFとして保存」を選ぶとPDF化できます</span>
+      <span style="font-size:13px;color:#555;margin-left:10px;">※ プリンタの代わりに「PDFとして保存」を選ぶとPDF化できます${seats?`　／　全${seats.length}名分（出席番号順）`:""}</span>
     </div>
-    <h2 style="text-align:center;margin:0 0 4px;font-size:18px;">マークシート解答用紙</h2>
-    <p style="text-align:center;margin:0 0 12px;font-size:14px;">${t.subject}　${t.test_name}</p>
-    <table class="info">
-      <tr>
-        <td>ID：______________</td>
-        <td>学年：${t.grade}</td>
-        <td>クラス：${t.class_name}</td>
-      </tr>
-      <tr>
-        <td>出席番号：__________</td>
-        <td colspan="2">氏名：________________________</td>
-      </tr>
-    </table>
-    <div class="cols">${colTables}</div>
-    <p style="margin-top:12px;font-size:11px;color:#555;text-align:center;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
+    ${pages}
     </body></html>`;
   const w=window.open("","_blank");
   if(!w){ alert("ポップアップがブロックされました。ブラウザのアドレス欄のブロック表示から、このサイトのポップアップを許可してください。"); return; }
@@ -332,6 +422,28 @@ async function startGrading(){
   if(!test){ alert("テストを選んでください"); return; }
   const files=document.getElementById("pdfInput").files;
   if(!files.length){ alert("PDFを選んでください"); return; }
+
+  // 事前印字テストの場合：出席番号順を前提にするため、名簿を取得して強い警告を出す
+  let roster=null;
+  if(test.use_preprint){
+    const {data:r, error}=await sb.from("roster")
+      .select("seat_number,student_id").eq("test_id",test.id).order("seat_number");
+    if(error){ alert("名簿の取得エラー: "+error.message); return; }
+    if(!r||r.length===0){ alert("このテストの名簿が見つかりません。"); return; }
+    roster=r;
+    const ok=confirm(
+      `【重要・必ずご確認ください】\n\n`+
+      `このテストは「出席番号を事前印字」したテストです。\n`+
+      `採点は、PDFの 1ページ目＝出席番号1番、2ページ目＝2番… として\n`+
+      `自動で割り当てます。\n\n`+
+      `そのため、解答用紙を必ず【出席番号順】に並べてからPDF化してください。\n`+
+      `順番が違うと、別の生徒の結果として登録されてしまいます。\n\n`+
+      `名簿の人数：${roster.length}名\n\n`+
+      `出席番号順に並んでいることを確認しました。採点を開始してよろしいですか？`
+    );
+    if(!ok){ return; }
+  }
+
   const prog=document.getElementById("gradeProg"); prog.classList.remove("hide");
 
   let images=[];
@@ -339,18 +451,43 @@ async function startGrading(){
     prog.textContent=`PDFを画像に変換中… (${f.name})`;
     const imgs=await pdfToImages(f); images=images.concat(imgs);
   }
+
+  // 事前印字モードで、ページ数と名簿人数が違う場合は注意を促す
+  if(roster && images.length!==roster.length){
+    const cont=confirm(
+      `PDFのページ数（${images.length}枚）と名簿の人数（${roster.length}名）が一致しません。\n\n`+
+      `欠席者がいる場合などはこのまま進められますが、\n`+
+      `ページと出席番号がずれていないか特にご注意ください。\n\n`+
+      `このまま採点を続けますか？`
+    );
+    if(!cont){ prog.classList.add("hide"); return; }
+  }
+
   prog.textContent=`採点中… 全${images.length}枚`;
 
   let done=0;
-  for(const img of images){
+  for(let i=0;i<images.length;i++){
+    const img=images[i];
     try{
       const read=await readSheet(img, test);
       const graded=gradeAnswers(read.answers, test);
+
+      // 事前印字モードなら、出席番号順を前提に名簿から ID・出席番号 を割り当てる
+      let sid, seat;
+      if(roster){
+        const entry=roster[i];                // i番目のページ = 出席番号順のi番目
+        sid  = entry ? entry.student_id : (read.student_id||"未読取");
+        seat = entry ? String(entry.seat_number) : "";
+      }else{
+        sid  = read.student_id||"未読取";
+        seat = read.seat_number||"";
+      }
+
       await sb.from("results").insert({
         test_id:test.id, school_id:SCHOOL.id,
-        student_id:read.student_id||"未読取", student_name:read.student_name||"",
+        student_id:sid, student_name:read.student_name||"",
         grade:read.grade||test.grade, class_name:read.class_name||test.class_name,
-        seat_number:read.seat_number||"",
+        seat_number:seat,
         answers:read.answers, score:graded.score, total:test.num_questions,
         detail:graded.detail
       });
@@ -465,7 +602,7 @@ async function showResults(test){
       nameHtml+=`<div style="margin-top:4px;"><span style="background:var(--red);color:#fff;font-size:11px;padding:2px 8px;border-radius:20px;">⚠ 採点ミスの報告あり</span></div>`;
       if(r.report_message) nameHtml+=`<div style="font-size:12px;color:var(--red);margin-top:3px;">「${esc(r.report_message)}」</div>`;
     }
-    tr.innerHTML=`<td>${esc(r.seat_number||"")}</td><td>${nameHtml}</td><td>${esc(r.student_id)}</td>`;
+    tr.innerHTML=`<td>${esc(r.grade||"")}</td><td>${esc(r.class_name||"")}</td><td>${esc(r.seat_number||"")}</td><td>${nameHtml}</td><td>${esc(r.student_id)}</td>`;
     const tdScore=document.createElement("td");
     const inp=document.createElement("input"); inp.type="number"; inp.className="score-edit"; inp.value=r.score;
     tdScore.appendChild(inp); tr.appendChild(tdScore);
