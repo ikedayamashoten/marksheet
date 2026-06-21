@@ -8,7 +8,7 @@
 // ※ Gemini APIキーはここには書きません。Supabaseのサーバー側(Secret)に
 //    登録し、grade-marksheet Edge Function 経由で安全に使います。
 // ============================================================
-const SUPABASE_URL  = "https://あなたのプロジェクトID.supabase.co";
-const SUPABASE_ANON = "あなたのanonキーをここに貼り付け";
+const SUPABASE_URL  = "https://jprsjjpsnkkbkntzxinu.supabase.co";
+const SUPABASE_ANON = "sb_publishable_2bnCANmbw1--68WUpoZL5w_jSS1XDHc";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
