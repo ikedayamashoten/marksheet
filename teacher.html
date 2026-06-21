@@ -50,6 +50,7 @@
   <h1>マークシート採点システム</h1>
   <span class="tag">先生用</span>
   <span class="right" id="schoolLabel"></span>
+  <button id="logoutBtn" class="hide" onclick="logout()" style="margin-left:14px;padding:7px 16px;font-size:13px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.4);">ログアウト</button>
 </header>
 
 <!-- ログイン -->
@@ -155,7 +156,13 @@ async function teacherLogin(){
   document.getElementById("gate").classList.add("hide");
   document.getElementById("app").classList.remove("hide");
   document.getElementById("schoolLabel").textContent=data.name;
+  document.getElementById("logoutBtn").classList.remove("hide");
   initForm(); loadTests();
+}
+
+function logout(){
+  if(!confirm("ログアウトしますか？")) return;
+  location.reload();
 }
 
 /* ---------- フォーム初期化 ---------- */
@@ -370,10 +377,36 @@ function renderTestList(){
     const tr=document.createElement("tr");
     tr.innerHTML=`<td>${t.grade}</td><td>${t.class_name}</td><td>${t.subject}</td><td>${esc(t.test_name)}</td><td>${t.num_questions}</td>`;
     const td=document.createElement("td");
+    td.style.whiteSpace="nowrap";
     const b=document.createElement("button"); b.className="btn-sub"; b.style.padding="6px 14px"; b.textContent="結果を見る";
-    b.onclick=()=>showResults(t); td.appendChild(b); tr.appendChild(td);
+    b.onclick=()=>showResults(t); td.appendChild(b);
+    const del=document.createElement("button");
+    del.className="btn-sub"; del.style.cssText="padding:6px 14px;margin-left:6px;color:var(--red);border-color:var(--red);";
+    del.textContent="削除"; del.onclick=()=>deleteTest(t);
+    td.appendChild(del);
+    tr.appendChild(td);
     body.appendChild(tr);
   });
+}
+
+async function deleteTest(test){
+  const ok=confirm(
+    `本当にこのテストを削除してよいですか？\n\n`+
+    `　学年：${test.grade} ${test.class_name}\n`+
+    `　科目：${test.subject}\n`+
+    `　テスト名：${test.test_name}\n\n`+
+    `※ このテストの採点結果もすべて消えます。\n`+
+    `※ この操作は元に戻せません。`
+  );
+  if(!ok) return;
+  // 結果を先に消してからテストを消す
+  await sb.from("results").delete().eq("test_id",test.id);
+  const {error}=await sb.from("tests").delete().eq("id",test.id);
+  if(error){ alert("削除エラー: "+error.message); return; }
+  TESTS=TESTS.filter(x=>x.id!==test.id);
+  document.getElementById("resultCard").classList.add("hide");
+  renderTestList();
+  alert("削除しました。");
 }
 
 async function showResults(test){
