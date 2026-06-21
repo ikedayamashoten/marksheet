@@ -232,34 +232,60 @@ async function saveTest(){
 function printSheet(){
   const t=SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
   const labels="ABCDEFGHIJ".split("");
-  let bubbles="";
-  for(let q=1;q<=t.num_questions;q++){
-    let row=`<td style="border:1px solid #000;padding:4px 8px;font-weight:bold;">${q}</td>`;
-    for(let c=0;c<t.num_choices;c++){
-      row+=`<td style="border:1px solid #000;padding:4px;text-align:center;">
-        <span style="display:inline-block;width:20px;height:20px;border:1.5px solid #000;border-radius:50%;line-height:18px;font-size:11px;">${labels[c]}</span></td>`;
+  const Q=t.num_questions, C=t.num_choices;
+
+  // 問題数に応じて列数を決める（1列あたり最大25問を目安に、最大4列）
+  let cols=1;
+  if(Q>25) cols=2;
+  if(Q>50) cols=3;
+  if(Q>75) cols=4;
+  const perCol=Math.ceil(Q/cols);
+
+  // 問題数・列数からサイズを自動調整して1枚に収める
+  let bubble=18, fs=12, pad=3;          // 標準サイズ
+  if(perCol>20){ bubble=15; fs=11; pad=2; }
+  if(perCol>28){ bubble=13; fs=10; pad=2; }
+
+  // 1問分の行を作る関数
+  const makeRow=(q)=>{
+    let cells=`<td style="border:1px solid #000;padding:${pad}px 6px;font-weight:bold;text-align:center;">${q}</td>`;
+    for(let c=0;c<C;c++){
+      cells+=`<td style="border:1px solid #000;padding:${pad}px;text-align:center;">`+
+        `<span style="display:inline-block;width:${bubble}px;height:${bubble}px;border:1.4px solid #000;border-radius:50%;line-height:${bubble-2}px;font-size:${fs-1}px;">${labels[c]}</span></td>`;
     }
-    bubbles+=`<tr>${row}</tr>`;
+    return `<tr>${cells}</tr>`;
+  };
+
+  // 各列のテーブルを作る
+  let colTables="";
+  for(let col=0;col<cols;col++){
+    const start=col*perCol+1;
+    const end=Math.min((col+1)*perCol, Q);
+    if(start>Q) break;
+    let rows="";
+    for(let q=start;q<=end;q++) rows+=makeRow(q);
+    colTables+=`<div style="flex:0 0 auto;"><table style="border-collapse:collapse;font-size:${fs}px;">${rows}</table></div>`;
   }
+
   const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
     <title>マークシート ${t.subject} ${t.test_name}</title>
     <style>
-      @page{margin:14mm;}
-      body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;padding:20px;}
+      @page{size:A4 portrait;margin:12mm;}
+      *{box-sizing:border-box;}
+      body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;padding:18px;}
       table{border-collapse:collapse;}
-      .info{width:100%;margin-bottom:20px;font-size:14px;}
-      .info td{border:1px solid #000;padding:10px;}
-      .bubbles{font-size:13px;}
-      .bubbles td{border:1px solid #000;}
-      .printbtn{margin-bottom:16px;}
-      @media print{.printbtn{display:none;}}
+      .info{width:100%;margin-bottom:14px;font-size:13px;}
+      .info td{border:1px solid #000;padding:8px;}
+      .cols{display:flex;flex-direction:row;justify-content:center;gap:18px;align-items:flex-start;}
+      .printbtn{margin-bottom:14px;}
+      @media print{.printbtn{display:none;} body{padding:0;}}
     </style></head><body>
     <div class="printbtn">
       <button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer;background:#1a2747;color:#fff;border:none;border-radius:8px;">この用紙を印刷／PDF保存する</button>
       <span style="font-size:13px;color:#555;margin-left:10px;">※ プリンタの代わりに「PDFとして保存」を選ぶとPDF化できます</span>
     </div>
-    <h2 style="text-align:center;margin:0 0 6px;">マークシート解答用紙</h2>
-    <p style="text-align:center;margin:0 0 16px;">${t.subject}　${t.test_name}</p>
+    <h2 style="text-align:center;margin:0 0 4px;font-size:18px;">マークシート解答用紙</h2>
+    <p style="text-align:center;margin:0 0 12px;font-size:14px;">${t.subject}　${t.test_name}</p>
     <table class="info">
       <tr>
         <td>ID：______________</td>
@@ -271,8 +297,8 @@ function printSheet(){
         <td colspan="2">氏名：________________________</td>
       </tr>
     </table>
-    <table class="bubbles">${bubbles}</table>
-    <p style="margin-top:14px;font-size:11px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
+    <div class="cols">${colTables}</div>
+    <p style="margin-top:12px;font-size:11px;color:#555;text-align:center;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
     </body></html>`;
   const w=window.open("","_blank");
   if(!w){ alert("ポップアップがブロックされました。ブラウザのアドレス欄のブロック表示から、このサイトのポップアップを許可してください。"); return; }
