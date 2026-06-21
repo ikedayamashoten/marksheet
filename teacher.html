@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>先生用画面 | マークシート採点システム</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{--navy:#1a2747;--gold:#c8a45c;--bg:#f4f5f8;--line:#e2e5ec;--red:#c0392b;--green:#1e7e4f;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:"Yu Gothic","Hiragino Sans",sans-serif;background:var(--bg);color:#222;}
+  header{background:var(--navy);color:#fff;padding:16px 28px;display:flex;align-items:center;gap:12px;}
+  header h1{font-size:18px;}
+  header .tag{background:var(--gold);color:var(--navy);font-size:12px;padding:3px 10px;border-radius:20px;font-weight:700;}
+  header .right{margin-left:auto;font-size:13px;}
+  .tabs{background:#fff;border-bottom:1px solid var(--line);display:flex;padding:0 20px;}
+  .tab{padding:14px 22px;cursor:pointer;font-size:14px;font-weight:700;color:#888;border-bottom:3px solid transparent;}
+  .tab.active{color:var(--navy);border-bottom-color:var(--gold);}
+  .wrap{max-width:1000px;margin:26px auto;padding:0 20px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:22px;}
+  .card h2{font-size:15px;color:var(--navy);margin-bottom:16px;border-left:4px solid var(--gold);padding-left:10px;}
+  label{display:block;font-size:13px;color:#555;margin:10px 0 4px;}
+  input,select{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;}
+  .row{display:grid;gap:14px;}
+  .row.c2{grid-template-columns:1fr 1fr;} .row.c3{grid-template-columns:1fr 1fr 1fr;} .row.c4{grid-template-columns:1fr 1fr 1fr 1fr;}
+  button{cursor:pointer;border:none;border-radius:8px;font-size:14px;font-weight:700;padding:11px 20px;}
+  .btn-main{background:var(--navy);color:#fff;margin-top:8px;}
+  .btn-main:hover{background:#243661;}
+  .btn-gold{background:var(--gold);color:var(--navy);}
+  .btn-sub{background:#fff;color:var(--navy);border:1px solid var(--line);}
+  .hide{display:none;}
+  .gate{max-width:380px;margin:80px auto;}
+  table{width:100%;border-collapse:collapse;margin-top:6px;}
+  th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);font-size:14px;}
+  th{color:#888;font-size:12px;}
+  .akey{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px;}
+  .akey .q{border:1px solid var(--line);border-radius:8px;padding:8px;}
+  .akey .q span{font-size:12px;color:#888;}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+  .chip{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;user-select:none;}
+  .chip.on{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .note{font-size:12px;color:#999;margin-top:6px;}
+  .prog{font-size:14px;color:var(--navy);margin-top:10px;}
+  .score-edit{width:70px;}
+  /* 印刷用マークシート */
+  @media print{
+    body *{visibility:hidden;}
+    #sheetArea, #sheetArea *{visibility:visible;}
+    #sheetArea{position:absolute;left:0;top:0;width:100%;}
+    .noprint{display:none!important;}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>マークシート採点システム</h1>
+  <span class="tag">先生用</span>
+  <span class="right" id="schoolLabel"></span>
+</header>
+
+<!-- ログイン -->
+<div class="wrap gate" id="gate">
+  <div class="card">
+    <h2>先生ログイン</h2>
+    <label>学校コード</label><input id="loginCode" placeholder="管理者から配布された学校コード">
+    <label>パスワード</label><input type="password" id="loginPass">
+    <button class="btn-main" style="width:100%" onclick="teacherLogin()">ログイン</button>
+  </div>
+</div>
+
+<div class="hide" id="app">
+<div class="tabs">
+  <div class="tab active" data-tab="t1" onclick="switchTab('t1')">① マークシート作成・印刷</div>
+  <div class="tab" data-tab="t2" onclick="switchTab('t2')">② 一括採点</div>
+  <div class="tab" data-tab="t3" onclick="switchTab('t3')">③ 結果確認・修正</div>
+</div>
+
+<!-- ① 作成 -->
+<div class="wrap tabpane" id="t1">
+  <div class="card">
+    <h2>テスト情報の設定</h2>
+    <div class="row c4">
+      <div><label>学年</label><select id="f_grade"></select></div>
+      <div><label>クラス</label><select id="f_class"></select></div>
+      <div><label>科目</label>
+        <select id="f_subject">
+          <option>国語</option><option>数学</option><option>英語</option><option>理科</option>
+          <option>社会</option><option>物理</option><option>化学</option><option>生物</option>
+          <option>地理</option><option>日本史</option><option>世界史</option><option>その他</option>
+        </select>
+      </div>
+      <div><label>テスト名</label><input id="f_testname" placeholder="例：第1回定期考査"></div>
+    </div>
+    <div class="row c2" style="margin-top:14px;">
+      <div><label>問題数</label><input type="number" id="f_qnum" min="1" max="100" value="20"></div>
+      <div><label>選択肢の数（1～10）</label>
+        <select id="f_cnum"></select>
+      </div>
+    </div>
+    <button class="btn-sub" onclick="buildAnswerKey()">正答の入力欄をつくる</button>
+  </div>
+
+  <div class="card hide" id="akeyCard">
+    <h2>正答の入力（複数選択可）</h2>
+    <p class="note">各設問で正解の選択肢をタップしてください。複数選んでもOKです。</p>
+    <div class="akey" id="akeyBox"></div>
+    <button class="btn-main" onclick="saveTest()">このテストを保存する</button>
+  </div>
+
+  <div class="card hide" id="dlCard">
+    <h2>マークシート用紙の印刷</h2>
+    <p class="note">下のボタンで印刷プレビューが開きます。プリンタの代わりに「PDFとして保存」を選ぶとPDF化できます。</p>
+    <button class="btn-gold" onclick="printSheet()">マークシート用紙を印刷／PDF保存</button>
+  </div>
+</div>
+
+<!-- ② 採点 -->
+<div class="wrap tabpane hide" id="t2">
+  <div class="card">
+    <h2>採点するテストを選ぶ</h2>
+    <select id="gradeTestSelect"></select>
+    <label style="margin-top:14px;">生徒の解答用紙（PDF・複数まとめてOK）</label>
+    <input type="file" id="pdfInput" accept="application/pdf" multiple>
+    <p class="note">回収した解答用紙をスキャンしたPDFを選んでください。1ページ＝1人として読み取ります。</p>
+    <button class="btn-main" onclick="startGrading()">一括採点を開始する</button>
+    <div class="prog hide" id="gradeProg"></div>
+  </div>
+</div>
+
+<!-- ③ 結果 -->
+<div class="wrap tabpane hide" id="t3">
+  <div class="card">
+    <h2>テスト一覧・検索</h2>
+    <input id="searchBox" placeholder="テスト名・科目・学年で検索" oninput="renderTestList()">
+    <table style="margin-top:12px;">
+      <thead><tr><th>学年</th><th>クラス</th><th>科目</th><th>テスト名</th><th>問題数</th><th></th></tr></thead>
+      <tbody id="testListBody"></tbody>
+    </table>
+  </div>
+  <div class="card hide" id="resultCard">
+    <h2 id="resultTitle">採点結果</h2>
+    <table>
+      <thead><tr><th>出席番号</th><th>氏名</th><th>ID</th><th>得点</th><th>満点</th><th></th></tr></thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+  </div>
+</div>
+</div>
+
+<!-- 印刷用マークシート（画面外） -->
+<div id="sheetArea" style="position:absolute;left:-9999px;"></div>
+
+<script src="config.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+let SCHOOL=null, TESTS=[], CUR_AKEY={};
+
+/* ---------- ログイン ---------- */
+async function teacherLogin(){
+  const code=val("loginCode"), pass=val("loginPass");
+  const {data,error}=await sb.from("schools").select("*").eq("school_code",code).eq("password",pass).maybeSingle();
+  if(error||!data){ alert("学校コードまたはパスワードが違います"); return; }
+  SCHOOL=data;
+  document.getElementById("gate").classList.add("hide");
+  document.getElementById("app").classList.remove("hide");
+  document.getElementById("schoolLabel").textContent=data.name;
+  initForm(); loadTests();
+}
+
+/* ---------- フォーム初期化 ---------- */
+function initForm(){
+  const g=document.getElementById("f_grade");
+  ["中1","中2","中3","高1","高2","高3"].forEach(v=>g.add(new Option(v,v)));
+  const c=document.getElementById("f_class");
+  for(let i=1;i<=15;i++) c.add(new Option(i+"組",i+"組"));
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(a=>c.add(new Option(a+"組",a+"組")));
+  const cn=document.getElementById("f_cnum");
+  for(let i=1;i<=10;i++) cn.add(new Option(i+"択",i));
+  cn.value=4;
+}
+
+/* ---------- タブ ---------- */
+function switchTab(id){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===id));
+  document.querySelectorAll(".tabpane").forEach(p=>p.classList.toggle("hide",p.id!==id));
+  if(id==="t2") fillGradeSelect();
+  if(id==="t3") renderTestList();
+}
+
+/* ---------- ① 正答入力 ---------- */
+function buildAnswerKey(){
+  const qn=+val("f_qnum"), cn=+document.getElementById("f_cnum").value;
+  if(!qn||qn<1){ alert("問題数を入力してください"); return; }
+  CUR_AKEY={};
+  const box=document.getElementById("akeyBox"); box.innerHTML="";
+  const labels="ABCDEFGHIJ".split("");
+  for(let q=1;q<=qn;q++){
+    CUR_AKEY[q]=[];
+    const div=document.createElement("div"); div.className="q";
+    div.innerHTML=`<span>第${q}問</span>`;
+    const chips=document.createElement("div"); chips.className="chips";
+    for(let c=0;c<cn;c++){
+      const chip=document.createElement("div"); chip.className="chip"; chip.textContent=labels[c];
+      chip.onclick=()=>{
+        const L=labels[c];
+        if(CUR_AKEY[q].includes(L)){ CUR_AKEY[q]=CUR_AKEY[q].filter(x=>x!==L); chip.classList.remove("on"); }
+        else { CUR_AKEY[q].push(L); chip.classList.add("on"); }
+      };
+      chips.appendChild(chip);
+    }
+    div.appendChild(chips); box.appendChild(div);
+  }
+  document.getElementById("akeyCard").classList.remove("hide");
+}
+
+let SAVED_TEST=null;
+async function saveTest(){
+  for(const q in CUR_AKEY){ if(CUR_AKEY[q].length===0){ alert("第"+q+"問の正答が未選択です"); return; } }
+  const rec={
+    school_id:SCHOOL.id, grade:val("f_grade"), class_name:val("f_class"),
+    subject:val("f_subject"), test_name:val("f_testname"),
+    num_questions:+val("f_qnum"), num_choices:+document.getElementById("f_cnum").value,
+    answer_key:CUR_AKEY
+  };
+  if(!rec.test_name){ alert("テスト名を入力してください"); return; }
+  const {data,error}=await sb.from("tests").insert(rec).select().single();
+  if(error){ alert("保存エラー: "+error.message); return; }
+  SAVED_TEST=data; TESTS.unshift(data);
+  alert("テストを保存しました。マークシート用紙を印刷できます。");
+  document.getElementById("dlCard").classList.remove("hide");
+}
+
+/* ---------- マークシート印刷 ---------- */
+function printSheet(){
+  const t=SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
+  const labels="ABCDEFGHIJ".split("");
+  let bubbles="";
+  for(let q=1;q<=t.num_questions;q++){
+    let row=`<td style="border:1px solid #000;padding:4px 8px;font-weight:bold;">${q}</td>`;
+    for(let c=0;c<t.num_choices;c++){
+      row+=`<td style="border:1px solid #000;padding:4px;text-align:center;">
+        <span style="display:inline-block;width:20px;height:20px;border:1.5px solid #000;border-radius:50%;line-height:18px;font-size:11px;">${labels[c]}</span></td>`;
+    }
+    bubbles+=`<tr>${row}</tr>`;
+  }
+  document.getElementById("sheetArea").innerHTML=`
+    <div style="font-family:'Yu Gothic';padding:30px;color:#000;">
+      <h2 style="text-align:center;margin-bottom:6px;">マークシート解答用紙</h2>
+      <p style="text-align:center;margin-bottom:16px;">${t.subject}　${t.test_name}</p>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
+        <tr>
+          <td style="border:1px solid #000;padding:10px;">ID：______________</td>
+          <td style="border:1px solid #000;padding:10px;">学年：${t.grade}</td>
+          <td style="border:1px solid #000;padding:10px;">クラス：${t.class_name}</td>
+        </tr>
+        <tr>
+          <td style="border:1px solid #000;padding:10px;">出席番号：__________</td>
+          <td style="border:1px solid #000;padding:10px;" colspan="2">氏名：________________________</td>
+        </tr>
+      </table>
+      <table style="border-collapse:collapse;font-size:13px;">${bubbles}</table>
+      <p style="margin-top:14px;font-size:11px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
+    </div>`;
+  window.print();
+}
+
+/* ---------- テスト読み込み ---------- */
+async function loadTests(){
+  const {data}=await sb.from("tests").select("*").eq("school_id",SCHOOL.id).order("created_at",{ascending:false});
+  TESTS=data||[];
+}
+function fillGradeSelect(){
+  const s=document.getElementById("gradeTestSelect"); s.innerHTML="";
+  TESTS.forEach(t=>s.add(new Option(`${t.grade} ${t.class_name} ${t.subject}｜${t.test_name}`,t.id)));
+}
+
+/* ---------- ② 一括採点 ---------- */
+async function startGrading(){
+  const tid=document.getElementById("gradeTestSelect").value;
+  const test=TESTS.find(t=>t.id===tid);
+  if(!test){ alert("テストを選んでください"); return; }
+  const files=document.getElementById("pdfInput").files;
+  if(!files.length){ alert("PDFを選んでください"); return; }
+  const prog=document.getElementById("gradeProg"); prog.classList.remove("hide");
+
+  let images=[];
+  for(const f of files){
+    prog.textContent=`PDFを画像に変換中… (${f.name})`;
+    const imgs=await pdfToImages(f); images=images.concat(imgs);
+  }
+  prog.textContent=`採点中… 全${images.length}枚`;
+
+  let done=0;
+  for(const img of images){
+    try{
+      const read=await readSheet(img, test);
+      const graded=gradeAnswers(read.answers, test);
+      await sb.from("results").insert({
+        test_id:test.id, school_id:SCHOOL.id,
+        student_id:read.student_id||"未読取", student_name:read.student_name||"",
+        grade:read.grade||test.grade, class_name:read.class_name||test.class_name,
+        seat_number:read.seat_number||"",
+        answers:read.answers, score:graded.score, total:test.num_questions,
+        detail:graded.detail
+      });
+    }catch(e){ console.error(e); }
+    done++; prog.textContent=`採点中… ${done}/${images.length} 枚完了`;
+  }
+  prog.textContent=`採点完了！ ${images.length}枚を処理しました。③のタブで結果を確認できます。`;
+}
+
+async function pdfToImages(file){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const out=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const vp=page.getViewport({scale:2});
+    const cv=document.createElement("canvas"); cv.width=vp.width; cv.height=vp.height;
+    await page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise;
+    out.push(cv.toDataURL("image/jpeg",0.85).split(",")[1]);
+  }
+  return out;
+}
+
+async function readSheet(b64, test){
+  // Geminiの呼び出しはサーバー側(Edge Function)で行う。
+  // ここではキーを一切持たず、画像とテスト情報を送るだけ。
+  const res=await fetch(`${SUPABASE_URL}/functions/v1/grade-marksheet`,{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":`Bearer ${SUPABASE_ANON}`
+    },
+    body:JSON.stringify({
+      image_base64:b64,
+      num_questions:test.num_questions,
+      num_choices:test.num_choices
+    })
+  });
+  try{ return await res.json(); }catch(e){ return {answers:{}}; }
+}
+
+function gradeAnswers(ans, test){
+  let score=0; const detail={};
+  for(let q=1;q<=test.num_questions;q++){
+    const correct=(test.answer_key[q]||[]).slice().sort();
+    const got=((ans&&ans[q])||[]).slice().sort();
+    const ok=correct.length===got.length && correct.every((v,i)=>v===got[i]);
+    if(ok) score++;
+    detail[q]={correct,got,ok};
+  }
+  return {score, detail};
+}
+
+/* ---------- ③ 結果 ---------- */
+function renderTestList(){
+  const kw=val("searchBox");
+  const body=document.getElementById("testListBody"); body.innerHTML="";
+  TESTS.filter(t=>!kw||`${t.grade}${t.class_name}${t.subject}${t.test_name}`.includes(kw))
+    .forEach(t=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${t.grade}</td><td>${t.class_name}</td><td>${t.subject}</td><td>${esc(t.test_name)}</td><td>${t.num_questions}</td>`;
+    const td=document.createElement("td");
+    const b=document.createElement("button"); b.className="btn-sub"; b.style.padding="6px 14px"; b.textContent="結果を見る";
+    b.onclick=()=>showResults(t); td.appendChild(b); tr.appendChild(td);
+    body.appendChild(tr);
+  });
+}
+
+async function showResults(test){
+  const {data}=await sb.from("results").select("*").eq("test_id",test.id).order("seat_number");
+  const card=document.getElementById("resultCard"); card.classList.remove("hide");
+  const reportCount=(data||[]).filter(r=>r.report_flag).length;
+  const badge=reportCount>0?` <span style="background:var(--red);color:#fff;font-size:12px;padding:3px 10px;border-radius:20px;">⚠ ${reportCount}件の報告</span>`:"";
+  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}`;
+  const body=document.getElementById("resultBody"); body.innerHTML="";
+  (data||[]).forEach(r=>{
+    const tr=document.createElement("tr");
+    if(r.report_flag) tr.style.background="#fcecec";
+    // 氏名セル（報告バッジ・コメント付き）
+    let nameHtml=esc(r.student_name||"");
+    if(r.report_flag){
+      nameHtml+=`<div style="margin-top:4px;"><span style="background:var(--red);color:#fff;font-size:11px;padding:2px 8px;border-radius:20px;">⚠ 採点ミスの報告あり</span></div>`;
+      if(r.report_message) nameHtml+=`<div style="font-size:12px;color:var(--red);margin-top:3px;">「${esc(r.report_message)}」</div>`;
+    }
+    tr.innerHTML=`<td>${esc(r.seat_number||"")}</td><td>${nameHtml}</td><td>${esc(r.student_id)}</td>`;
+    const tdScore=document.createElement("td");
+    const inp=document.createElement("input"); inp.type="number"; inp.className="score-edit"; inp.value=r.score;
+    tdScore.appendChild(inp); tr.appendChild(tdScore);
+    const tdTotal=document.createElement("td"); tdTotal.textContent=r.total; tr.appendChild(tdTotal);
+    const tdBtn=document.createElement("td");
+    if(r.report_flag){
+      // 報告がある場合：得点修正＋報告解決をまとめて行うボタン
+      const resolve=document.createElement("button"); resolve.className="btn-gold"; resolve.style.padding="6px 14px"; resolve.textContent="✓ 修正して解決";
+      resolve.onclick=async()=>{
+        const {error}=await sb.from("results").update({score:+inp.value, report_flag:false, report_message:null}).eq("id",r.id);
+        if(error){ alert("エラー:"+error.message); return; }
+        showResults(test);
+      };
+      tdBtn.appendChild(resolve);
+    }else{
+      const save=document.createElement("button"); save.className="btn-gold"; save.style.padding="6px 14px"; save.textContent="修正保存";
+      save.onclick=async()=>{
+        const {error}=await sb.from("results").update({score:+inp.value}).eq("id",r.id);
+        alert(error?("エラー:"+error.message):"修正を保存しました");
+      };
+      tdBtn.appendChild(save);
+    }
+    tr.appendChild(tdBtn);
+    body.appendChild(tr);
+  });
+}
+
+function val(id){ return document.getElementById(id).value.trim(); }
+function esc(s){ return String(s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+</script>
+</body>
+</html>

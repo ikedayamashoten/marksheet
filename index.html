@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理画面 | マークシート採点システム</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --navy:#1a2747; --gold:#c8a45c; --bg:#f4f5f8; --line:#e2e5ec;
+    --red:#c0392b; --green:#1e7e4f;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:"Yu Gothic","Hiragino Sans",sans-serif;background:var(--bg);color:#222;}
+  header{background:var(--navy);color:#fff;padding:18px 28px;display:flex;align-items:center;gap:12px;}
+  header h1{font-size:20px;font-weight:700;}
+  header .tag{background:var(--gold);color:var(--navy);font-size:12px;padding:3px 10px;border-radius:20px;font-weight:700;}
+  .wrap{max-width:1000px;margin:30px auto;padding:0 20px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:24px;}
+  .card h2{font-size:16px;color:var(--navy);margin-bottom:16px;border-left:4px solid var(--gold);padding-left:10px;}
+  label{display:block;font-size:13px;color:#555;margin:10px 0 4px;}
+  input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;}
+  .row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+  button{cursor:pointer;border:none;border-radius:8px;font-size:14px;font-weight:700;padding:11px 20px;}
+  .btn-main{background:var(--navy);color:#fff;margin-top:16px;}
+  .btn-main:hover{background:#243661;}
+  .btn-del{background:#fff;color:var(--red);border:1px solid var(--red);padding:6px 14px;font-size:13px;}
+  .btn-del:hover{background:var(--red);color:#fff;}
+  table{width:100%;border-collapse:collapse;margin-top:6px;}
+  th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--line);font-size:14px;}
+  th{color:#888;font-size:12px;font-weight:600;}
+  .empty{color:#999;text-align:center;padding:30px;font-size:14px;}
+  .gate{max-width:380px;margin:80px auto;}
+  .hide{display:none;}
+  .note{font-size:12px;color:#999;margin-top:6px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>マークシート採点システム</h1>
+  <span class="tag">管理画面</span>
+</header>
+
+<!-- ログインゲート -->
+<div class="wrap gate" id="gate">
+  <div class="card">
+    <h2>管理者ログイン</h2>
+    <label>管理パスワード</label>
+    <input type="password" id="adminPass" placeholder="パスワードを入力">
+    <button class="btn-main" style="width:100%" onclick="login()">ログイン</button>
+    <p class="note">初期パスワードは config.js の ADMIN_PASS で変更できます</p>
+  </div>
+</div>
+
+<!-- メイン -->
+<div class="wrap hide" id="main">
+  <div class="card">
+    <h2>学校を追加</h2>
+    <div class="row">
+      <div><label>学校名</label><input id="sName" placeholder="例：池田山高校"></div>
+      <div><label>学校コード（ID）</label><input id="sCode" placeholder="例：IKEDA2026"></div>
+      <div><label>パスワード</label><input id="sPass" placeholder="例：pass1234"></div>
+    </div>
+    <button class="btn-main" onclick="addSchool()">この学校を追加する</button>
+  </div>
+
+  <div class="card">
+    <h2>学校一覧</h2>
+    <table>
+      <thead><tr><th>学校名</th><th>学校コード</th><th>パスワード</th><th></th></tr></thead>
+      <tbody id="schoolList"></tbody>
+    </table>
+    <div class="empty hide" id="emptyMsg">まだ学校が登録されていません</div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+// 管理者パスワード（必要なら書き換えてください）
+const ADMIN_PASS = "admin0000";
+
+function login(){
+  if(document.getElementById("adminPass").value === ADMIN_PASS){
+    document.getElementById("gate").classList.add("hide");
+    document.getElementById("main").classList.remove("hide");
+    loadSchools();
+  }else{
+    alert("パスワードが違います");
+  }
+}
+
+async function loadSchools(){
+  const {data, error} = await sb.from("schools").select("*").order("created_at",{ascending:false});
+  const tbody = document.getElementById("schoolList");
+  const empty = document.getElementById("emptyMsg");
+  tbody.innerHTML = "";
+  if(error){ alert("読み込みエラー: "+error.message); return; }
+  if(!data || data.length===0){ empty.classList.remove("hide"); return; }
+  empty.classList.add("hide");
+  data.forEach(s=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td>${esc(s.name)}</td><td>${esc(s.school_code)}</td><td>${esc(s.password)}</td>`;
+    const td = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.className="btn-del"; btn.textContent="削除";
+    btn.onclick = ()=>delSchool(s.id, s.name);
+    td.appendChild(btn); tr.appendChild(td);
+    tbody.appendChild(tr);
+  });
+}
+
+async function addSchool(){
+  const name=val("sName"), code=val("sCode"), pass=val("sPass");
+  if(!name||!code||!pass){ alert("すべて入力してください"); return; }
+  const {error} = await sb.from("schools").insert({name, school_code:code, password:pass});
+  if(error){ alert("追加エラー: "+error.message); return; }
+  document.getElementById("sName").value="";
+  document.getElementById("sCode").value="";
+  document.getElementById("sPass").value="";
+  loadSchools();
+}
+
+async function delSchool(id, name){
+  if(!confirm(`「${name}」を削除しますか？\n関連するテスト・結果もすべて消えます。`)) return;
+  const {error} = await sb.from("schools").delete().eq("id",id);
+  if(error){ alert("削除エラー: "+error.message); return; }
+  loadSchools();
+}
+
+function val(id){ return document.getElementById(id).value.trim(); }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+</script>
+</body>
+</html>
