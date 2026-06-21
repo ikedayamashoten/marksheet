@@ -54,48 +54,68 @@
 <script src="config.js"></script>
 <script>
 async function studentLogin(){
-  const code=val("code"), sid=val("sid");
-  if(!code||!sid){ alert("学校コードとIDを入力してください"); return; }
-  const {data:school}=await sb.from("schools").select("id,name").eq("school_code",code).maybeSingle();
-  if(!school){ alert("学校コードが見つかりません"); return; }
+  try{
+    const code=val("code"), sid=val("sid");
+    if(!code||!sid){ alert("学校コードとIDを入力してください"); return; }
 
-  const {data:results}=await sb.from("results")
-    .select("*, tests(test_name,subject,grade,class_name)")
-    .eq("school_id",school.id).eq("student_id",sid)
-    .order("created_at",{ascending:false});
+    // 学校を探す
+    const {data:school, error:schoolErr}=await sb.from("schools")
+      .select("id,name").eq("school_code",code).maybeSingle();
+    if(schoolErr){ alert("通信エラー: "+schoolErr.message); return; }
+    if(!school){ alert("学校コードが見つかりません"); return; }
 
-  document.getElementById("gate").classList.add("hide");
-  document.getElementById("main").classList.remove("hide");
-  const list=document.getElementById("resList");
-  const empty=document.getElementById("empty");
-  list.innerHTML="";
-  if(!results||results.length===0){ empty.classList.remove("hide"); return; }
+    // この生徒の結果を取得（テーブル連結を使わない）
+    const {data:results, error:resErr}=await sb.from("results")
+      .select("*")
+      .eq("school_id",school.id).eq("student_id",sid)
+      .order("created_at",{ascending:false});
+    if(resErr){ alert("結果取得エラー: "+resErr.message); return; }
 
-  results.forEach(r=>{
-    const t=r.tests||{};
-    const div=document.createElement("div"); div.className="res";
-    div.innerHTML=`
-      <div class="meta">
-        <b>${esc(t.test_name||"テスト")}</b>
-        ${esc(t.subject||"")}　${esc(t.grade||"")} ${esc(t.class_name||"")}
-      </div>
-      <div class="score">${r.score}<small> / ${r.total}点</small></div>`;
-    list.appendChild(div);
+    // テスト情報をまとめて取得して、id→テスト名などの対応表を作る
+    let testMap={};
+    if(results && results.length){
+      const testIds=[...new Set(results.map(r=>r.test_id))];
+      const {data:tests}=await sb.from("tests")
+        .select("id,test_name,subject,grade,class_name").in("id",testIds);
+      (tests||[]).forEach(t=>{ testMap[t.id]=t; });
+    }
 
-    // 採点ミス報告エリア
-    const action=document.createElement("div");
-    action.style.cssText="padding:10px 0 18px;border-bottom:1px solid var(--line);";
-    if(r.report_flag){
-      action.innerHTML=`<div style="background:#fdf3e0;color:#8a5a00;font-size:13px;padding:9px 12px;border-radius:8px;">⏳ 報告を送信しました。先生の確認をお待ちください。</div>`;
-    }else{
-      const btn=document.createElement("button");
-      btn.textContent="⚑ 採点の間違いを報告する";
-      btn.style.cssText="width:auto;margin:0;padding:8px 14px;font-size:13px;background:#fff;color:var(--red);border:1px solid var(--red);";
-      btn.onclick=()=>sendReport(r.id, action);
-      action.appendChild(btn);
+    document.getElementById("gate").classList.add("hide");
+    document.getElementById("main").classList.remove("hide");
+    const list=document.getElementById("resList");
+    const empty=document.getElementById("empty");
+    list.innerHTML="";
+    if(!results||results.length===0){ empty.classList.remove("hide"); return; }
+    empty.classList.add("hide");
+
+    results.forEach(r=>{
+      const t=testMap[r.test_id]||{};
+      const div=document.createElement("div"); div.className="res";
+      div.innerHTML=`
+        <div class="meta">
+          <b>${esc(t.test_name||"テスト")}</b>
+          ${esc(t.subject||"")}　${esc(t.grade||"")} ${esc(t.class_name||"")}
+        </div>
+        <div class="score">${r.score}<small> / ${r.total}点</small></div>`;
+      list.appendChild(div);
+
+      // 採点ミス報告エリア
+      const action=document.createElement("div");
+      action.style.cssText="padding:10px 0 18px;border-bottom:1px solid var(--line);";
+      if(r.report_flag){
+        action.innerHTML=`<div style="background:#fdf3e0;color:#8a5a00;font-size:13px;padding:9px 12px;border-radius:8px;">⏳ 報告を送信しました。先生の確認をお待ちください。</div>`;
+      }else{
+        const btn=document.createElement("button");
+        btn.textContent="⚑ 採点の間違いを報告する";
+        btn.style.cssText="width:auto;margin:0;padding:8px 14px;font-size:13px;background:#fff;color:var(--red);border:1px solid var(--red);";
+        btn.onclick=()=>sendReport(r.id, action);
+        action.appendChild(btn);
     }
     list.appendChild(action);
-  });
+    });
+  }catch(e){
+    alert("エラーが発生しました: "+e.message);
+  }
 }
 
 async function sendReport(resultId, areaEl){
@@ -104,6 +124,7 @@ async function sendReport(resultId, areaEl){
   const {error}=await sb.from("results").update({report_flag:true, report_message:msg}).eq("id",resultId);
   if(error){ alert("送信エラー: "+error.message); return; }
   areaEl.innerHTML=`<div style="background:#fdf3e0;color:#8a5a00;font-size:13px;padding:9px 12px;border-radius:8px;">⏳ 報告を送信しました。先生の確認をお待ちください。</div>`;
+}
 function val(id){ return document.getElementById(id).value.trim(); }
 function esc(s){ return String(s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 </script>
