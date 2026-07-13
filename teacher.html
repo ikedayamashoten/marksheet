@@ -748,6 +748,27 @@ async function deleteTest(test){
   alert("削除しました。");
 }
 
+/* 問題ごとの正誤詳細をカード一覧のHTMLにする（先生・生徒共通の見せ方） */
+function detailGridHtml(detail, total){
+  if(!detail || Object.keys(detail).length===0){
+    return `<div style="color:#999;font-size:13px;padding:8px;">この結果には問題ごとの詳細データがありません（古い採点結果の可能性があります）。</div>`;
+  }
+  let cells="";
+  for(let q=1;q<=total;q++){
+    const d=detail[q]; if(!d) continue;
+    const got=(d.got&&d.got.length)?d.got.join("・"):"無解答";
+    const cor=(d.correct||d.cor||[]).join("・");
+    const bg=d.ok?"#e8f5ec":"#fdecec";
+    const bd=d.ok?"#1e7e4f":"#c0392b";
+    const mark=d.ok?"○":"×";
+    cells+=`<div style="border:1px solid ${bd};background:${bg};border-radius:8px;padding:6px 8px;font-size:12px;">
+      <b style="color:${bd};">第${q}問 ${mark}</b><br>
+      解答：${esc(got)}${d.ok?"":"<br>正解："+esc(cor)}
+    </div>`;
+  }
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;padding:8px 0;">${cells}</div>`;
+}
+
 async function showResults(test){
   const {data}=await sb.from("results").select("*").eq("test_id",test.id).order("seat_number");
   const card=document.getElementById("resultCard"); card.classList.remove("hide");
@@ -787,8 +808,27 @@ async function showResults(test){
       };
       tdBtn.appendChild(save);
     }
+    // 詳細ボタン（どの問題を間違えたかを開閉表示）
+    const det=document.createElement("button");
+    det.className="btn-sub"; det.style.cssText="padding:6px 14px;margin-left:6px;";
+    det.textContent="詳細";
+    tdBtn.appendChild(det);
     tr.appendChild(tdBtn);
     body.appendChild(tr);
+
+    // 開閉式の詳細行（最初は隠す）
+    const detTr=document.createElement("tr");
+    detTr.classList.add("hide");
+    const detTd=document.createElement("td");
+    detTd.colSpan=8;
+    detTd.style.cssText="background:#fafafa;";
+    detTd.innerHTML=detailGridHtml(r.detail, r.total);
+    detTr.appendChild(detTd);
+    body.appendChild(detTr);
+    det.onclick=()=>{
+      detTr.classList.toggle("hide");
+      det.textContent=detTr.classList.contains("hide")?"詳細":"閉じる";
+    };
   });
 }
 
