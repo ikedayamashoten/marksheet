@@ -99,11 +99,28 @@ async function studentLogin(){
         <div class="score">${r.score}<small> / ${r.total}点</small></div>`;
       list.appendChild(div);
 
-      // 採点ミス報告エリア
+      // 採点ミス報告エリア＋詳細表示
       const action=document.createElement("div");
       action.style.cssText="padding:10px 0 18px;border-bottom:1px solid var(--line);";
+
+      // どこを間違えたか（開閉式）
+      const detBtn=document.createElement("button");
+      detBtn.textContent="▼ どこを間違えたか見る";
+      detBtn.style.cssText="width:auto;margin:0 8px 0 0;padding:8px 14px;font-size:13px;background:#fff;color:var(--navy);border:1px solid var(--line);";
+      const detBox=document.createElement("div");
+      detBox.className="hide";
+      detBox.innerHTML=detailGridHtml(r.detail, r.total);
+      detBtn.onclick=()=>{
+        detBox.classList.toggle("hide");
+        detBtn.textContent=detBox.classList.contains("hide")?"▼ どこを間違えたか見る":"▲ 閉じる";
+      };
+      action.appendChild(detBtn);
+
       if(r.report_flag){
-        action.innerHTML=`<div style="background:#fdf3e0;color:#8a5a00;font-size:13px;padding:9px 12px;border-radius:8px;">⏳ 報告を送信しました。先生の確認をお待ちください。</div>`;
+        const wait=document.createElement("div");
+        wait.style.cssText="display:inline-block;background:#fdf3e0;color:#8a5a00;font-size:13px;padding:9px 12px;border-radius:8px;";
+        wait.textContent="⏳ 報告を送信しました。先生の確認をお待ちください。";
+        action.appendChild(wait);
       }else{
         const btn=document.createElement("button");
         btn.textContent="⚑ 採点の間違いを報告する";
@@ -111,11 +128,33 @@ async function studentLogin(){
         btn.onclick=()=>sendReport(r.id, action);
         action.appendChild(btn);
     }
+    action.appendChild(detBox);
     list.appendChild(action);
     });
   }catch(e){
     alert("エラーが発生しました: "+e.message);
   }
+}
+
+/* 問題ごとの正誤詳細をカード一覧のHTMLにする */
+function detailGridHtml(detail, total){
+  if(!detail || Object.keys(detail).length===0){
+    return `<div style="color:#999;font-size:13px;padding:8px;">この結果には問題ごとの詳細データがありません。</div>`;
+  }
+  let cells="";
+  for(let q=1;q<=total;q++){
+    const d=detail[q]; if(!d) continue;
+    const got=(d.got&&d.got.length)?d.got.join("・"):"無解答";
+    const cor=(d.correct||d.cor||[]).join("・");
+    const bg=d.ok?"#e8f5ec":"#fdecec";
+    const bd=d.ok?"#1e7e4f":"#c0392b";
+    const mark=d.ok?"○":"×";
+    cells+=`<div style="border:1px solid ${bd};background:${bg};border-radius:8px;padding:6px 8px;font-size:12px;">
+      <b style="color:${bd};">第${q}問 ${mark}</b><br>
+      解答：${esc(got)}${d.ok?"":"<br>正解："+esc(cor)}
+    </div>`;
+  }
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;padding:10px 0;">${cells}</div>`;
 }
 
 async function sendReport(resultId, areaEl){
