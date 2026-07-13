@@ -345,8 +345,9 @@ async function printSheet(testArg){
   const makeSheet=(seat)=>{
     let el="";
     // 四隅マーカー（読み取りの基準になる黒い四角。絶対に消さない）
+    // ※背景色ではなくSVG図形として描く：ブラウザの「背景を印刷しない」設定でも必ず印刷される
     MARKERS.forEach(m=>{
-      el+=`<div style="position:absolute;left:${px(m.x-MARKER_SIZE/2)}px;top:${px(m.y-MARKER_SIZE/2)}px;width:${px(MARKER_SIZE)}px;height:${px(MARKER_SIZE)}px;background:#000;"></div>`;
+      el+=`<svg style="position:absolute;left:${px(m.x-MARKER_SIZE/2)}px;top:${px(m.y-MARKER_SIZE/2)}px;" width="${px(MARKER_SIZE)}" height="${px(MARKER_SIZE)}"><rect width="${px(MARKER_SIZE)}" height="${px(MARKER_SIZE)}" fill="#000"/></svg>`;
     });
     // タイトル
     el+=`<div style="position:absolute;left:0;top:${px(75)}px;width:100%;text-align:center;font-size:${px(26)}px;font-weight:bold;">マークシート解答用紙</div>`;
@@ -383,7 +384,7 @@ async function printSheet(testArg){
     <title>マークシート ${t.subject} ${t.test_name}</title>
     <style>
       @page{size:A4 portrait;margin:0;}
-      *{box-sizing:border-box;}
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
       body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;background:#e5e5e5;}
       .sheet{page-break-after:always;margin:0 auto 12px;}
       .sheet:last-child{page-break-after:auto;}
