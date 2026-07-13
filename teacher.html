@@ -146,6 +146,15 @@
       <tbody id="testListBody"></tbody>
     </table>
   </div>
+  <div class="card hide" id="akeyEditCard">
+    <h2 id="akeyEditTitle">正答の確認・修正</h2>
+    <p class="note">現在の正答が選択された状態で表示されています。タップで変更できます（複数選択可）。</p>
+    <div class="akey" id="akeyEditBox"></div>
+    <div style="margin-top:14px;">
+      <button class="btn-main" style="margin-top:0;" onclick="saveAnswerKeyEdit()">この内容で正答を保存する</button>
+      <button class="btn-sub" style="margin-left:8px;" onclick="document.getElementById('akeyEditCard').classList.add('hide')">閉じる</button>
+    </div>
+  </div>
   <div class="card hide" id="resultCard">
     <h2 id="resultTitle">採点結果</h2>
     <table>
@@ -637,6 +646,10 @@ function renderTestList(){
     pr.className="btn-sub"; pr.style.cssText="padding:6px 14px;margin-left:6px;";
     pr.textContent="追加印刷"; pr.onclick=()=>printSheet(t);
     td.appendChild(pr);
+    const ak=document.createElement("button");
+    ak.className="btn-sub"; ak.style.cssText="padding:6px 14px;margin-left:6px;";
+    ak.textContent="正答"; ak.onclick=()=>editAnswerKey(t);
+    td.appendChild(ak);
     const del=document.createElement("button");
     del.className="btn-sub"; del.style.cssText="padding:6px 14px;margin-left:6px;color:var(--red);border-color:var(--red);";
     del.textContent="削除"; del.onclick=()=>deleteTest(t);
@@ -644,6 +657,75 @@ function renderTestList(){
     tr.appendChild(td);
     body.appendChild(tr);
   });
+}
+
+/* ---------- 正答の確認・修正 ---------- */
+let EDIT_TEST=null, EDIT_KEY={};
+
+function editAnswerKey(test){
+  EDIT_TEST=test;
+  // 現在の正答をコピーして編集用に持つ
+  EDIT_KEY={};
+  for(let q=1;q<=test.num_questions;q++){
+    EDIT_KEY[q]=(test.answer_key[q]||[]).slice();
+  }
+  const labels="ABCDEFGHIJ".split("");
+  document.getElementById("akeyEditTitle").textContent=
+    `正答の確認・修正：${test.test_name}（${test.subject}）`;
+  const box=document.getElementById("akeyEditBox"); box.innerHTML="";
+  for(let q=1;q<=test.num_questions;q++){
+    const div=document.createElement("div"); div.className="q";
+    div.innerHTML=`<span>第${q}問</span>`;
+    const chips=document.createElement("div"); chips.className="chips";
+    for(let c=0;c<test.num_choices;c++){
+      const L=labels[c];
+      const chip=document.createElement("div"); chip.className="chip"; chip.textContent=L;
+      if(EDIT_KEY[q].includes(L)) chip.classList.add("on");   // 現在の正答を選択済みで表示
+      chip.onclick=()=>{
+        if(EDIT_KEY[q].includes(L)){ EDIT_KEY[q]=EDIT_KEY[q].filter(x=>x!==L); chip.classList.remove("on"); }
+        else { EDIT_KEY[q].push(L); chip.classList.add("on"); }
+      };
+      chips.appendChild(chip);
+    }
+    div.appendChild(chips); box.appendChild(div);
+  }
+  document.getElementById("akeyEditCard").classList.remove("hide");
+  document.getElementById("akeyEditCard").scrollIntoView({behavior:"smooth"});
+}
+
+async function saveAnswerKeyEdit(){
+  const test=EDIT_TEST; if(!test) return;
+  for(const q in EDIT_KEY){
+    if(EDIT_KEY[q].length===0){ alert("第"+q+"問の正答が未選択です"); return; }
+  }
+  const {error}=await sb.from("tests").update({answer_key:EDIT_KEY}).eq("id",test.id);
+  if(error){ alert("保存エラー: "+error.message); return; }
+  test.answer_key=JSON.parse(JSON.stringify(EDIT_KEY));   // 手元のデータも更新
+
+  // 採点済みの結果があるか確認し、再計算するかを毎回選んでもらう
+  const {data:results}=await sb.from("results").select("id,answers,score").eq("test_id",test.id);
+  if(results && results.length>0){
+    const recalc=confirm(
+      `正答を保存しました。\n\n`+
+      `このテストには採点済みの結果が ${results.length}件 あります。\n`+
+      `新しい正答で全員の点数を再計算しますか？\n\n`+
+      `【OK】→ 全員の点数を新しい正答で計算し直します\n`+
+      `　（先生が手で修正した点数も上書きされます）\n`+
+      `【キャンセル】→ 点数はそのまま。今後の採点にだけ新しい正答を使います`
+    );
+    if(recalc){
+      let done=0;
+      for(const r of results){
+        const graded=gradeAnswers(r.answers||{}, test);
+        await sb.from("results").update({score:graded.score, detail:graded.detail}).eq("id",r.id);
+        done++;
+      }
+      alert(`再計算が完了しました（${done}件）。「結果を見る」で確認できます。`);
+    }
+  }else{
+    alert("正答を保存しました。");
+  }
+  document.getElementById("akeyEditCard").classList.add("hide");
 }
 
 async function deleteTest(test){
