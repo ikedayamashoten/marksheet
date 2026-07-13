@@ -748,25 +748,73 @@ async function deleteTest(test){
   alert("削除しました。");
 }
 
-/* 問題ごとの正誤詳細をカード一覧のHTMLにする（先生・生徒共通の見せ方） */
-function detailGridHtml(detail, total){
-  if(!detail || Object.keys(detail).length===0){
-    return `<div style="color:#999;font-size:13px;padding:8px;">この結果には問題ごとの詳細データがありません（古い採点結果の可能性があります）。</div>`;
-  }
-  let cells="";
-  for(let q=1;q<=total;q++){
-    const d=detail[q]; if(!d) continue;
-    const got=(d.got&&d.got.length)?d.got.join("・"):"無解答";
-    const cor=(d.correct||d.cor||[]).join("・");
-    const bg=d.ok?"#e8f5ec":"#fdecec";
-    const bd=d.ok?"#1e7e4f":"#c0392b";
-    const mark=d.ok?"○":"×";
-    cells+=`<div style="border:1px solid ${bd};background:${bg};border-radius:8px;padding:6px 8px;font-size:12px;">
-      <b style="color:${bd};">第${q}問 ${mark}</b><br>
-      解答：${esc(got)}${d.ok?"":"<br>正解："+esc(cor)}
-    </div>`;
-  }
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;padding:8px 0;">${cells}</div>`;
+/* 先生用：問題ごとの正誤詳細（クリックで生徒の解答を修正でき、点数も自動更新） */
+function buildTeacherDetail(r, test, scoreInput){
+  const labels="ABCDEFGHIJ".split("");
+  const wrap=document.createElement("div");
+  const note=document.createElement("div");
+  note.style.cssText="font-size:12px;color:#888;padding:4px 0;";
+  note.textContent="※ 読み取りが違う問題をクリックすると、生徒の解答を修正できます（保存すると点数も自動で更新されます）";
+  const grid=document.createElement("div");
+  grid.style.cssText="display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:6px;padding:8px 0;";
+  wrap.appendChild(note); wrap.appendChild(grid);
+
+  const render=()=>{
+    grid.innerHTML="";
+    const detail=r.detail||{};
+    for(let q=1;q<=r.total;q++){
+      const d=detail[q]||{got:((r.answers&&r.answers[q])||[]), correct:(test.answer_key[q]||[]), ok:false};
+      const got=(d.got&&d.got.length)?d.got.join("・"):"無解答";
+      const cor=(d.correct||d.cor||[]).join("・");
+      const bd=d.ok?"#1e7e4f":"#c0392b", bg=d.ok?"#e8f5ec":"#fdecec";
+      const card=document.createElement("div");
+      card.style.cssText=`border:1px solid ${bd};background:${bg};border-radius:8px;padding:6px 8px;font-size:12px;cursor:pointer;`;
+      card.innerHTML=`<b style="color:${bd};">第${q}問 ${d.ok?"○":"×"}</b><br>解答：${esc(got)}${d.ok?"":"<br>正解："+esc(cor)}`;
+      card.title="クリックして解答を修正";
+      card.onclick=()=>openEdit(q, card);
+      grid.appendChild(card);
+    }
+  };
+
+  const openEdit=(q, card)=>{
+    card.onclick=null; card.style.cursor="default";
+    card.innerHTML=`<b>第${q}問の解答を修正</b><div style="font-size:11px;color:#666;margin:2px 0;">生徒が実際に塗った選択肢を選んでください</div>`;
+    const sel=new Set(((r.answers&&r.answers[q])||[]));
+    const chips=document.createElement("div"); chips.className="chips";
+    for(let c=0;c<test.num_choices;c++){
+      const L=labels[c];
+      const chip=document.createElement("div"); chip.className="chip"; chip.textContent=L;
+      if(sel.has(L)) chip.classList.add("on");
+      chip.onclick=(e)=>{ e.stopPropagation();
+        if(sel.has(L)){ sel.delete(L); chip.classList.remove("on"); }
+        else{ sel.add(L); chip.classList.add("on"); }
+      };
+      chips.appendChild(chip);
+    }
+    card.appendChild(chips);
+    const bar=document.createElement("div"); bar.style.marginTop="6px";
+    const okB=document.createElement("button"); okB.className="btn-gold";
+    okB.style.cssText="padding:4px 10px;font-size:12px;"; okB.textContent="✓ 保存";
+    okB.onclick=async(e)=>{
+      e.stopPropagation();
+      const ans=r.answers?JSON.parse(JSON.stringify(r.answers)):{};
+      ans[q]=Array.from(sel);
+      const graded=gradeAnswers(ans, test);
+      const {error}=await sb.from("results").update({answers:ans, detail:graded.detail, score:graded.score}).eq("id",r.id);
+      if(error){ alert("保存エラー: "+error.message); return; }
+      r.answers=ans; r.detail=graded.detail; r.score=graded.score;
+      if(scoreInput) scoreInput.value=graded.score;   // 行の点数欄にも即反映
+      render();
+    };
+    const ngB=document.createElement("button"); ngB.className="btn-sub";
+    ngB.style.cssText="padding:4px 10px;font-size:12px;margin-left:6px;"; ngB.textContent="キャンセル";
+    ngB.onclick=(e)=>{ e.stopPropagation(); render(); };
+    bar.appendChild(okB); bar.appendChild(ngB);
+    card.appendChild(bar);
+  };
+
+  render();
+  return wrap;
 }
 
 async function showResults(test){
@@ -822,7 +870,7 @@ async function showResults(test){
     const detTd=document.createElement("td");
     detTd.colSpan=8;
     detTd.style.cssText="background:#fafafa;";
-    detTd.innerHTML=detailGridHtml(r.detail, r.total);
+    detTd.appendChild(buildTeacherDetail(r, test, inp));
     detTr.appendChild(detTd);
     body.appendChild(detTr);
     det.onclick=()=>{
