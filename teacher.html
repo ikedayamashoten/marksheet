@@ -281,45 +281,56 @@ async function saveTest(){
 }
 
 /* ---------- マークシート印刷 ---------- */
-async function printSheet(testArg){
-  const t=testArg || SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
-  const labels="ABCDEFGHIJ".split("");
-  const Q=t.num_questions, C=t.num_choices;
+/* ==========================================================
+   用紙の座標設計図（印刷と読み取りの両方がこれを使う）
+   紙を 横1000 × 縦1414 の座標で表す（A4の縦横比）
+   ========================================================== */
+const SHEET_W=1000, SHEET_H=1414;
+// 四隅の位置合わせマーカー（黒い四角）の中心座標とサイズ
+const MARKERS=[{x:55,y:55},{x:945,y:55},{x:55,y:1359},{x:945,y:1359}];
+const MARKER_SIZE=36;
 
-  // 問題数に応じて列数を決める（1列あたり最大25問を目安に、最大4列）
+function sheetLayout(Q, C){
+  // 列数（1列あたり最大25問、最大4列）
   let cols=1;
   if(Q>25) cols=2;
   if(Q>50) cols=3;
   if(Q>75) cols=4;
   const perCol=Math.ceil(Q/cols);
 
-  // 問題数・列数からサイズを自動調整して1枚に収める
-  let bubble=18, fs=12, pad=3;          // 標準サイズ
-  if(perCol>20){ bubble=15; fs=11; pad=2; }
-  if(perCol>28){ bubble=13; fs=10; pad=2; }
+  // マーク欄を置く領域
+  const areaX0=80, areaX1=920, areaY0=340, areaY1=1330;
+  const colW=(areaX1-areaX0)/cols;
+  const rowH=Math.min((areaY1-areaY0)/perCol, 40);
+  const cellW=colW/(C+1.7);                       // 問題番号ぶんの余白込み
+  const bubbleR=Math.min(cellW*0.33, rowH*0.33, 13); // マーク円の半径
 
-  // 1問分の行を作る関数
-  const makeRow=(q)=>{
-    let cells=`<td style="border:1px solid #000;padding:${pad}px 6px;font-weight:bold;text-align:center;">${q}</td>`;
+  const bubbles={}, numbers={};
+  for(let q=1;q<=Q;q++){
+    const col=Math.floor((q-1)/perCol);
+    const row=(q-1)%perCol;
+    const colX0=areaX0+col*colW;
+    const y=areaY0+rowH*(row+0.5);
+    numbers[q]={x:colX0+cellW*0.7, y:y};
+    bubbles[q]=[];
     for(let c=0;c<C;c++){
-      cells+=`<td style="border:1px solid #000;padding:${pad}px;text-align:center;">`+
-        `<span style="display:inline-block;width:${bubble}px;height:${bubble}px;border:1.4px solid #000;border-radius:50%;line-height:${bubble-2}px;font-size:${fs-1}px;">${labels[c]}</span></td>`;
+      bubbles[q].push({x:colX0+cellW*(1.7+c+0.5), y:y});
     }
-    return `<tr>${cells}</tr>`;
-  };
-
-  // 設問部分（列分割済み）のHTMLを作る
-  let colTables="";
-  for(let col=0;col<cols;col++){
-    const start=col*perCol+1;
-    const end=Math.min((col+1)*perCol, Q);
-    if(start>Q) break;
-    let rows="";
-    for(let q=start;q<=end;q++) rows+=makeRow(q);
-    colTables+=`<div style="flex:0 0 auto;"><table style="border-collapse:collapse;font-size:${fs}px;">${rows}</table></div>`;
   }
+  return {cols, perCol, bubbles, numbers, bubbleR, rowH};
+}
 
-  // 事前印字モードかどうかで、上部の記入欄を切り替える
+/* ---------- マークシート印刷（OMR対応・四隅マーカー付き） ---------- */
+async function printSheet(testArg){
+  const t=testArg || SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
+  const labels="ABCDEFGHIJ".split("");
+  const Q=t.num_questions, C=t.num_choices;
+  const L=sheetLayout(Q,C);
+
+  // 紙上の座標 → 画面px（A4=794×1123px相当で描く）
+  const S=794/SHEET_W;
+  const px=v=>Math.round(v*S);
+
   // roster（名簿）を取得（事前印字テストのとき）
   let seats=null;
   if(t.use_preprint){
@@ -330,70 +341,58 @@ async function printSheet(testArg){
     seats=roster;
   }
 
-  // 1枚分の用紙HTMLを作る関数（seatがあれば事前印字、なければ手書き欄）
+  // 1枚分の用紙HTML
   const makeSheet=(seat)=>{
-    let infoTop;
-    if(seat){
-      // 事前印字：ID・出席番号を印字、氏名のみ手書き
-      infoTop=`
-      <tr>
-        <td>ID：<b style="font-size:15px;letter-spacing:1px;">${seat.student_id}</b></td>
-        <td>学年：${t.grade}</td>
-        <td>クラス：${t.class_name}</td>
-      </tr>
-      <tr>
-        <td>出席番号：<b style="font-size:15px;">${seat.seat_number}</b></td>
-        <td colspan="2">氏名：________________________</td>
-      </tr>`;
-    }else{
-      // 手書き欄
-      infoTop=`
-      <tr>
-        <td>ID：______________</td>
-        <td>学年：${t.grade}</td>
-        <td>クラス：${t.class_name}</td>
-      </tr>
-      <tr>
-        <td>出席番号：__________</td>
-        <td colspan="2">氏名：________________________</td>
-      </tr>`;
+    let el="";
+    // 四隅マーカー（読み取りの基準になる黒い四角。絶対に消さない）
+    MARKERS.forEach(m=>{
+      el+=`<div style="position:absolute;left:${px(m.x-MARKER_SIZE/2)}px;top:${px(m.y-MARKER_SIZE/2)}px;width:${px(MARKER_SIZE)}px;height:${px(MARKER_SIZE)}px;background:#000;"></div>`;
+    });
+    // タイトル
+    el+=`<div style="position:absolute;left:0;top:${px(75)}px;width:100%;text-align:center;font-size:${px(26)}px;font-weight:bold;">マークシート解答用紙</div>`;
+    el+=`<div style="position:absolute;left:0;top:${px(112)}px;width:100%;text-align:center;font-size:${px(19)}px;">${t.subject}　${t.test_name}</div>`;
+    // 記入欄
+    const info = seat
+      ? `<tr><td>ID：<b style="letter-spacing:1px;">${seat.student_id}</b></td><td>学年：${t.grade}</td><td>クラス：${t.class_name}</td></tr>
+         <tr><td>出席番号：<b>${seat.seat_number}</b></td><td colspan="2">氏名：________________________</td></tr>`
+      : `<tr><td>ID：______________</td><td>学年：${t.grade}</td><td>クラス：${t.class_name}</td></tr>
+         <tr><td>出席番号：__________</td><td colspan="2">氏名：________________________</td></tr>`;
+    el+=`<div style="position:absolute;left:${px(90)}px;top:${px(150)}px;width:${px(820)}px;">
+      <table style="width:100%;border-collapse:collapse;font-size:${px(17)}px;">
+        ${info.replace(/<td/g,'<td style="border:1px solid #000;padding:'+px(9)+'px;"')}
+      </table></div>`;
+    // 問題番号とマーク円
+    for(let q=1;q<=Q;q++){
+      const n=L.numbers[q];
+      el+=`<div style="position:absolute;left:${px(n.x-24)}px;top:${px(n.y-10)}px;width:${px(48)}px;text-align:center;font-size:${px(16)}px;font-weight:bold;">${q}</div>`;
+      L.bubbles[q].forEach((b,c)=>{
+        const r=L.bubbleR;
+        el+=`<div style="position:absolute;left:${px(b.x-r)}px;top:${px(b.y-r)}px;width:${px(r*2)}px;height:${px(r*2)}px;border:1.5px solid #000;border-radius:50%;text-align:center;line-height:${px(r*2-3)}px;font-size:${px(r)}px;color:#555;">${labels[c]}</div>`;
+      });
     }
-    return `
-      <div class="sheet">
-        <h2 style="text-align:center;margin:0 0 4px;font-size:18px;">マークシート解答用紙</h2>
-        <p style="text-align:center;margin:0 0 12px;font-size:14px;">${t.subject}　${t.test_name}</p>
-        <table class="info">${infoTop}</table>
-        <div class="cols">${colTables}</div>
-        <p style="margin-top:12px;font-size:11px;color:#555;text-align:center;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。</p>
-      </div>`;
+    // 注意書き
+    el+=`<div style="position:absolute;left:0;top:${px(1345)}px;width:100%;text-align:center;font-size:${px(13)}px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。四隅の黒い四角は消さないでください。</div>`;
+    return `<div class="sheet" style="position:relative;width:794px;height:1123px;background:#fff;">${el}</div>`;
   };
 
-  // 全ページを組み立てる
   let pages="";
-  if(seats){
-    seats.forEach(s=>{ pages+=makeSheet(s); });
-  }else{
-    pages=makeSheet(null);
-  }
+  if(seats){ seats.forEach(s=>{ pages+=makeSheet(s); }); }
+  else{ pages=makeSheet(null); }
 
   const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
     <title>マークシート ${t.subject} ${t.test_name}</title>
     <style>
-      @page{size:A4 portrait;margin:12mm;}
+      @page{size:A4 portrait;margin:0;}
       *{box-sizing:border-box;}
-      body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;padding:18px;}
-      table{border-collapse:collapse;}
-      .info{width:100%;margin-bottom:14px;font-size:13px;}
-      .info td{border:1px solid #000;padding:8px;}
-      .cols{display:flex;flex-direction:row;justify-content:center;gap:18px;align-items:flex-start;}
-      .sheet{page-break-after:always;}
+      body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;background:#e5e5e5;}
+      .sheet{page-break-after:always;margin:0 auto 12px;}
       .sheet:last-child{page-break-after:auto;}
-      .printbtn{margin-bottom:14px;}
-      @media print{.printbtn{display:none;} body{padding:0;}}
+      .printbtn{padding:14px;text-align:center;background:#fff;}
+      @media print{.printbtn{display:none;} body{background:#fff;} .sheet{margin:0 auto;}}
     </style></head><body>
     <div class="printbtn">
       <button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer;background:#1a2747;color:#fff;border:none;border-radius:8px;">この用紙を印刷／PDF保存する</button>
-      <span style="font-size:13px;color:#555;margin-left:10px;">※ プリンタの代わりに「PDFとして保存」を選ぶとPDF化できます${seats?`　／　全${seats.length}名分（出席番号順）`:""}</span>
+      <span style="font-size:13px;color:#555;margin-left:10px;">※「PDFとして保存」でPDF化できます。印刷設定の「余白」は「なし」または「既定」のままにしてください${seats?`　／　全${seats.length}名分（出席番号順）`:""}</span>
     </div>
     ${pages}
     </body></html>`;
@@ -448,6 +447,19 @@ async function startGrading(){
     if(!ok){ return; }
   }
 
+  // 事前印字でないテスト：手書き文字は読み取れないため、ページ順に番号を割り当てる旨を警告
+  if(!test.use_preprint){
+    const ok=confirm(
+      `【ご確認ください】\n\n`+
+      `この採点は用紙のマークだけを読み取ります（手書きのIDや氏名は読み取りません）。\n`+
+      `結果は PDFの 1ページ目＝1番、2ページ目＝2番… の順で登録されます。\n\n`+
+      `解答用紙を出席番号順など、決めた順番に並べてからPDF化してください。\n`+
+      `（誰の答案かは、並べた順番で決まります）\n\n`+
+      `採点を開始してよろしいですか？`
+    );
+    if(!ok){ return; }
+  }
+
   const prog=document.getElementById("gradeProg"); prog.classList.remove("hide");
 
   let images=[];
@@ -469,36 +481,42 @@ async function startGrading(){
 
   prog.textContent=`採点中… 全${images.length}枚`;
 
-  let done=0;
+  let done=0, failed=0;
   for(let i=0;i<images.length;i++){
-    const img=images[i];
+    const cv=images[i];
     try{
-      const read=await readSheet(img, test);
-      const graded=gradeAnswers(read.answers, test);
+      const read=omrRead(cv, test);          // ← AIを使わず、コードだけで読み取る
+      const isFail=!!read.error;
+      if(isFail) failed++;
+      const ans=read.answers||{};
+      const graded=gradeAnswers(ans, test);
 
-      // 事前印字モードなら、出席番号順を前提に名簿から ID・出席番号 を割り当てる
+      // ID・出席番号の割り当て（すべてページ順ベース）
       let sid, seat;
       if(roster){
         const entry=roster[i];                // i番目のページ = 出席番号順のi番目
-        sid  = entry ? entry.student_id : (read.student_id||"未読取");
-        seat = entry ? String(entry.seat_number) : "";
+        sid  = entry ? entry.student_id : ("P"+String(i+1).padStart(3,"0"));
+        seat = entry ? String(entry.seat_number) : String(i+1);
       }else{
-        sid  = read.student_id||"未読取";
-        seat = read.seat_number||"";
+        sid  = "P"+String(i+1).padStart(3,"0");
+        seat = String(i+1);
       }
 
       await sb.from("results").insert({
         test_id:test.id, school_id:SCHOOL.id,
-        student_id:sid, student_name:read.student_name||"",
-        grade:read.grade||test.grade, class_name:read.class_name||test.class_name,
+        student_id:sid,
+        student_name: isFail ? "（読取失敗・要確認）" : "",
+        grade:test.grade, class_name:test.class_name,
         seat_number:seat,
-        answers:read.answers, score:graded.score, total:test.num_questions,
+        answers:ans, score:graded.score, total:test.num_questions,
         detail:graded.detail
       });
-    }catch(e){ console.error(e); }
+    }catch(e){ console.error(e); failed++; }
     done++; prog.textContent=`採点中… ${done}/${images.length} 枚完了`;
   }
-  prog.textContent=`採点完了！ ${images.length}枚を処理しました。③のタブで結果を確認できます。`;
+  prog.textContent=`採点完了！ ${images.length}枚を処理しました`+
+    (failed>0?`（うち${failed}枚は読取失敗。③タブで確認・手修正してください）`:"")+
+    `。③のタブで結果を確認できます。`;
 }
 
 async function pdfToImages(file){
@@ -510,27 +528,84 @@ async function pdfToImages(file){
     const vp=page.getViewport({scale:2});
     const cv=document.createElement("canvas"); cv.width=vp.width; cv.height=vp.height;
     await page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise;
-    out.push(cv.toDataURL("image/jpeg",0.85).split(",")[1]);
+    out.push(cv);   // canvasのまま返す（OMRで画素を直接読むため）
   }
   return out;
 }
 
-async function readSheet(b64, test){
-  // Geminiの呼び出しはサーバー側(Edge Function)で行う。
-  // ここではキーを一切持たず、画像とテスト情報を送るだけ。
-  const res=await fetch(`${SUPABASE_URL}/functions/v1/grade-marksheet`,{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      "Authorization":`Bearer ${SUPABASE_ANON}`
-    },
-    body:JSON.stringify({
-      image_base64:b64,
-      num_questions:test.num_questions,
-      num_choices:test.num_choices
-    })
-  });
-  try{ return await res.json(); }catch(e){ return {answers:{}}; }
+/* ==========================================================
+   OMR読み取り（AI不使用・費用ゼロ）
+   四隅の黒マーカーを探して位置合わせし、各マーク円の
+   塗りつぶし率を測って解答を判定する
+   ========================================================== */
+function omrRead(canvas, test){
+  const W=canvas.width, H=canvas.height;
+  const ctx=canvas.getContext("2d");
+  const img=ctx.getImageData(0,0,W,H).data;
+
+  // 明るさ（グレースケール）を取り出す関数
+  const bright=(x,y)=>{
+    const i=((y|0)*W+(x|0))*4;
+    return (img[i]*0.299+img[i+1]*0.587+img[i+2]*0.114);
+  };
+
+  // 画像全体の平均の明るさから「黒」のしきい値を決める
+  let sum=0, n=0;
+  for(let y=0;y<H;y+=7){ for(let x=0;x<W;x+=7){ sum+=bright(x,y); n++; } }
+  const mean=sum/n;
+  const thr=Math.min(150, mean*0.62);
+
+  // 四隅の窓の中で黒い画素の重心を探す（＝マーカーの中心）
+  const findMarker=(x0,y0,x1,y1)=>{
+    let sx=0, sy=0, cnt=0;
+    for(let y=y0;y<y1;y+=2){
+      for(let x=x0;x<x1;x+=2){
+        if(bright(x,y)<thr){ sx+=x; sy+=y; cnt++; }
+      }
+    }
+    if(cnt<40) return null;   // 黒がほとんど無ければ失敗
+    return {x:sx/cnt, y:sy/cnt};
+  };
+  const wx=Math.floor(W*0.20), wy=Math.floor(H*0.16);
+  const TL=findMarker(0,0,wx,wy);
+  const TR=findMarker(W-wx,0,W,wy);
+  const BL=findMarker(0,H-wy,wx,H);
+  const BR=findMarker(W-wx,H-wy,W,H);
+  if(!TL||!TR||!BL||!BR) return {error:"四隅のマーカーが見つかりません"};
+
+  // 紙上の座標(x,y) → スキャン画像上の座標 に変換（4点から補間）
+  const M0=MARKERS[0], M1=MARKERS[1], M2=MARKERS[2];
+  const mapPt=(x,y)=>{
+    const u=(x-M0.x)/(M1.x-M0.x);
+    const v=(y-M0.y)/(M2.y-M0.y);
+    return {
+      x: TL.x*(1-u)*(1-v)+TR.x*u*(1-v)+BL.x*(1-u)*v+BR.x*u*v,
+      y: TL.y*(1-u)*(1-v)+TR.y*u*(1-v)+BL.y*(1-u)*v+BR.y*u*v
+    };
+  };
+  const scalePx=Math.hypot(TR.x-TL.x, TR.y-TL.y)/(M1.x-M0.x);
+
+  // 各マーク円の内側の黒率を測る
+  const L=sheetLayout(test.num_questions, test.num_choices);
+  const labels="ABCDEFGHIJ".split("");
+  const answers={};
+  for(let q=1;q<=test.num_questions;q++){
+    answers[q]=[];
+    L.bubbles[q].forEach((b,c)=>{
+      const p=mapPt(b.x,b.y);
+      const r=L.bubbleR*scalePx*0.72;   // 円の枠線を避けて内側だけ測る
+      let dark=0, tot=0;
+      for(let dy=-r;dy<=r;dy+=1.5){
+        for(let dx=-r;dx<=r;dx+=1.5){
+          if(dx*dx+dy*dy>r*r) continue;
+          tot++;
+          if(bright(p.x+dx,p.y+dy)<thr) dark++;
+        }
+      }
+      if(tot>0 && dark/tot>0.38) answers[q].push(labels[c]);
+    });
+  }
+  return {answers};
 }
 
 function gradeAnswers(ans, test){
