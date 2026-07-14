@@ -468,7 +468,7 @@ async function printSheet(testArg){
       });
     }
     // 注意書き
-    el+=`<div style="position:absolute;left:0;top:${px(1345)}px;width:100%;text-align:center;font-size:${px(13)}px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。自分の出席番号（十の位・一の位）も必ず塗ってください。四隅の黒い四角は消さないでください。</div>`;
+    el+=`<div style="position:absolute;left:${px(150)}px;top:${px(1342)}px;width:${px(700)}px;text-align:center;font-size:${px(12)}px;color:#555;">※ 解答と自分の出席番号（十の位・一の位）を黒く塗りつぶしてください。黒い四角には触れないでください。</div>`;
     return `<div class="sheet" style="position:relative;width:794px;height:1123px;background:#fff;">${el}</div>`;
   };
 
