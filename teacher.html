@@ -413,7 +413,8 @@ async function printSheet(testArg){
     L.seatColMarks.forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-7)}px;top:${px(m.y-5)}px;" width="${px(14)}" height="${px(10)}"><rect width="${px(14)}" height="${px(10)}" fill="#000"/></svg>`;
     });
-    const seatVal = seat ? parseInt(seat.seat_number) : null;
+    // 出席番号マークは事前に塗らず、生徒自身に塗ってもらう
+    const seatVal = null;
     const drawSeatRow=(pts, labelTxt, digitVal)=>{
       el+=`<div style="position:absolute;left:${px(120)}px;top:${px(pts[0].y-9)}px;font-size:${px(13)}px;">出席番号 ${labelTxt}</div>`;
       pts.forEach((p,d)=>{
@@ -467,7 +468,7 @@ async function printSheet(testArg){
       });
     }
     // 注意書き
-    el+=`<div style="position:absolute;left:0;top:${px(1345)}px;width:100%;text-align:center;font-size:${px(13)}px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。${seat?"":"出席番号のマーク（十の位・一の位）も塗ってください。"}四隅の黒い四角は消さないでください。</div>`;
+    el+=`<div style="position:absolute;left:0;top:${px(1345)}px;width:100%;text-align:center;font-size:${px(13)}px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。自分の出席番号（十の位・一の位）も必ず塗ってください。四隅の黒い四角は消さないでください。</div>`;
     return `<div class="sheet" style="position:relative;width:794px;height:1123px;background:#fff;">${el}</div>`;
   };
 
@@ -532,11 +533,11 @@ async function startGrading(){
     roster=r;
     const ok=confirm(
       `【ご確認ください】\n\n`+
-      `このテストは「出席番号を事前印字」したテストです。\n`+
-      `各用紙の出席番号マーク（黒塗り済み）を読み取って、自動で生徒に紐付けます。\n`+
+      `このテストは「専用IDを事前印字」したテストです。\n`+
+      `生徒が塗った出席番号マークを読み取って、名簿と自動で照合します。\n`+
       `そのため、ページの並び順が多少違っても正しく照合されます。\n\n`+
-      `※ 万一マークが読めなかった用紙は、ページ順で割り当てます。\n`+
-      `　できるだけ出席番号順に並べてPDF化することをおすすめします。\n\n`+
+      `※ 出席番号マークが塗られていない・読めない用紙は、ページ順で割り当てます。\n`+
+      `※ 用紙は出席番号順に配布されている前提です（印字済みIDと番号を対応させるため）。\n\n`+
       `名簿の人数：${roster.length}名\n\n`+
       `採点を開始してよろしいですか？`
     );
