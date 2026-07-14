@@ -146,6 +146,22 @@
       <tbody id="testListBody"></tbody>
     </table>
   </div>
+  <div class="card hide" id="dupCard">
+    <h2 id="dupTitle">テストを複製</h2>
+    <p class="note">同じ問題数・選択肢数・正答のまま、別のクラス向けに複製します。</p>
+    <div class="row c3">
+      <div><label>学年</label><select id="dup_grade"></select></div>
+      <div><label>クラス</label><select id="dup_class"></select></div>
+      <div><label>テスト名</label><input id="dup_name"></div>
+    </div>
+    <div class="row c2 hide" id="dupNumRow" style="margin-top:10px;">
+      <div><label>クラスの人数（事前印字ID用）</label><input type="number" id="dup_num" min="1" max="99"></div>
+    </div>
+    <div style="margin-top:14px;">
+      <button class="btn-main" style="margin-top:0;" onclick="runDuplicate()">この内容で複製する</button>
+      <button class="btn-sub" style="margin-left:8px;" onclick="document.getElementById('dupCard').classList.add('hide')">閉じる</button>
+    </div>
+  </div>
   <div class="card hide" id="akeyEditCard">
     <h2 id="akeyEditTitle">正答の確認・修正</h2>
     <p class="note">現在の正答が選択された状態で表示されています。タップで変更できます（複数選択可）。</p>
@@ -343,7 +359,12 @@ function sheetLayout(Q, C){
   }
   const colMarksTop=colXs.map(x=>({x, y:26}));
   const colMarksBottom=colXs.map(x=>({x, y:1386}));
-  return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom};
+  // 出席番号のマーク欄（十の位・一の位、各0〜9）。記入欄の下・設問の上に置く
+  const seatR=11;
+  const seatDigit=(rowY)=>{ const a=[]; for(let d=0;d<10;d++) a.push({x:250+d*56, y:rowY}); return a; };
+  const seatDigits={ tens:seatDigit(292), ones:seatDigit(322), r:seatR };
+  const seatMarks=[{x:38,y:292},{x:38,y:322}];   // 出席番号行の位置補正用
+  return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom, seatDigits, seatMarks};
 }
 
 /* ---------- マークシート印刷（OMR対応・四隅マーカー付き） ---------- */
@@ -383,6 +404,24 @@ async function printSheet(testArg){
     L.colMarksTop.concat(L.colMarksBottom).forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-8)}px;top:${px(m.y-6)}px;" width="${px(16)}" height="${px(12)}"><rect width="${px(16)}" height="${px(12)}" fill="#000"/></svg>`;
     });
+    // 出席番号マーク欄（十の位・一の位）＋その行の左マーク
+    L.seatMarks.forEach(m=>{
+      el+=`<svg style="position:absolute;left:${px(m.x-13)}px;top:${px(m.y-8)}px;" width="${px(26)}" height="${px(16)}"><rect width="${px(26)}" height="${px(16)}" fill="#000"/></svg>`;
+    });
+    const seatVal = seat ? parseInt(seat.seat_number) : null;
+    const drawSeatRow=(pts, labelTxt, digitVal)=>{
+      el+=`<div style="position:absolute;left:${px(120)}px;top:${px(pts[0].y-9)}px;font-size:${px(13)}px;">出席番号 ${labelTxt}</div>`;
+      pts.forEach((p,d)=>{
+        const filled = (digitVal!==null && d===digitVal);
+        const r=L.seatDigits.r;
+        el+=`<svg style="position:absolute;left:${px(p.x-r)}px;top:${px(p.y-r)}px;" width="${px(r*2)}" height="${px(r*2)}">
+          <circle cx="${px(r)}" cy="${px(r)}" r="${px(r-1)}" fill="${filled?'#000':'none'}" stroke="#000" stroke-width="1.5"/>
+          ${filled?'':`<text x="${px(r)}" y="${px(r)}" text-anchor="middle" dominant-baseline="central" font-size="${px(r)}" fill="#555">${d}</text>`}
+        </svg>`;
+      });
+    };
+    drawSeatRow(L.seatDigits.tens, "十の位", seatVal!==null ? Math.floor(seatVal/10)%10 : null);
+    drawSeatRow(L.seatDigits.ones, "一の位", seatVal!==null ? seatVal%10 : null);
     // タイトル
     el+=`<div style="position:absolute;left:0;top:${px(75)}px;width:100%;text-align:center;font-size:${px(26)}px;font-weight:bold;">マークシート解答用紙</div>`;
     el+=`<div style="position:absolute;left:0;top:${px(112)}px;width:100%;text-align:center;font-size:${px(19)}px;">${t.subject}　${t.test_name}</div>`;
@@ -406,7 +445,7 @@ async function printSheet(testArg){
       });
     }
     // 注意書き
-    el+=`<div style="position:absolute;left:0;top:${px(1345)}px;width:100%;text-align:center;font-size:${px(13)}px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。四隅の黒い四角は消さないでください。</div>`;
+    el+=`<div style="position:absolute;left:0;top:${px(1345)}px;width:100%;text-align:center;font-size:${px(13)}px;color:#555;">※ 正解だと思う選択肢を黒く塗りつぶしてください（複数可）。${seat?"":"出席番号のマーク（十の位・一の位）も塗ってください。"}四隅の黒い四角は消さないでください。</div>`;
     return `<div class="sheet" style="position:relative;width:794px;height:1123px;background:#fff;">${el}</div>`;
   };
 
@@ -470,14 +509,14 @@ async function startGrading(){
     if(!r||r.length===0){ alert("このテストの名簿が見つかりません。"); return; }
     roster=r;
     const ok=confirm(
-      `【重要・必ずご確認ください】\n\n`+
+      `【ご確認ください】\n\n`+
       `このテストは「出席番号を事前印字」したテストです。\n`+
-      `採点は、PDFの 1ページ目＝出席番号1番、2ページ目＝2番… として\n`+
-      `自動で割り当てます。\n\n`+
-      `そのため、解答用紙を必ず【出席番号順】に並べてからPDF化してください。\n`+
-      `順番が違うと、別の生徒の結果として登録されてしまいます。\n\n`+
+      `各用紙の出席番号マーク（黒塗り済み）を読み取って、自動で生徒に紐付けます。\n`+
+      `そのため、ページの並び順が多少違っても正しく照合されます。\n\n`+
+      `※ 万一マークが読めなかった用紙は、ページ順で割り当てます。\n`+
+      `　できるだけ出席番号順に並べてPDF化することをおすすめします。\n\n`+
       `名簿の人数：${roster.length}名\n\n`+
-      `出席番号順に並んでいることを確認しました。採点を開始してよろしいですか？`
+      `採点を開始してよろしいですか？`
     );
     if(!ok){ return; }
   }
@@ -486,10 +525,9 @@ async function startGrading(){
   if(!test.use_preprint){
     const ok=confirm(
       `【ご確認ください】\n\n`+
-      `この採点は用紙のマークだけを読み取ります（手書きのIDや氏名は読み取りません）。\n`+
-      `結果は PDFの 1ページ目＝1番、2ページ目＝2番… の順で登録されます。\n\n`+
-      `解答用紙を出席番号順など、決めた順番に並べてからPDF化してください。\n`+
-      `（誰の答案かは、並べた順番で決まります）\n\n`+
+      `この採点は用紙のマークだけを読み取ります（手書きのIDや氏名は読み取りません）。\n\n`+
+      `生徒が用紙の「出席番号マーク」を塗っていれば、その番号で自動的に登録されます。\n`+
+      `塗られていない用紙は、PDFのページ順（1ページ目＝1番…）で番号が付きます。\n\n`+
       `採点を開始してよろしいですか？`
     );
     if(!ok){ return; }
@@ -526,15 +564,18 @@ async function startGrading(){
       const ans=read.answers||{};
       const graded=gradeAnswers(ans, test);
 
-      // ID・出席番号の割り当て（すべてページ順ベース）
+      // ID・出席番号の割り当て：用紙の出席番号マークを最優先、読めなければページ順
       let sid, seat;
+      const readSeat=(typeof read.seat==="number" && read.seat>0) ? read.seat : null;
       if(roster){
-        const entry=roster[i];                // i番目のページ = 出席番号順のi番目
-        sid  = entry ? entry.student_id : ("P"+String(i+1).padStart(3,"0"));
-        seat = entry ? String(entry.seat_number) : String(i+1);
+        let entry=null;
+        if(readSeat!==null) entry=roster.find(x=>x.seat_number===readSeat);   // マークから照合
+        if(!entry) entry=roster[i];                                            // 予備：ページ順
+        sid  = entry ? entry.student_id : ("P"+String(readSeat||i+1).padStart(3,"0"));
+        seat = entry ? String(entry.seat_number) : String(readSeat||i+1);
       }else{
-        sid  = "P"+String(i+1).padStart(3,"0");
-        seat = String(i+1);
+        seat = String(readSeat||i+1);
+        sid  = "P"+String(readSeat||i+1).padStart(3,"0");
       }
 
       await sb.from("results").insert({
@@ -695,7 +736,36 @@ function omrRead(canvas, test){
       if(tot>0 && dark/tot>0.38) answers[q].push(labels[c]);
     });
   }
-  return {answers};
+  // 出席番号マークを読む（十の位・一の位。行ごとの左マークで位置補正）
+  const readSeatRow=(pts, markIdx)=>{
+    const m=L.seatMarks[markIdx];
+    const pm=mapPt(m.x,m.y);
+    const found=findBlob(pm.x-22*scalePx, pm.y-14*scalePx, pm.x+22*scalePx, pm.y+14*scalePx, Math.max(6,14*scalePx));
+    const off=found?{dx:found.x-pm.x, dy:found.y-pm.y}:{dx:0,dy:0};
+    let best=-1, bestRatio=0;
+    pts.forEach((pt,d)=>{
+      const p=mapPt(pt.x,pt.y);
+      const r=L.seatDigits.r*scalePx*0.72;
+      let dark=0, tot=0;
+      for(let dy=-r;dy<=r;dy+=1.5){
+        for(let dx=-r;dx<=r;dx+=1.5){
+          if(dx*dx+dy*dy>r*r) continue;
+          tot++;
+          if(bright(p.x+off.dx+dx, p.y+off.dy+dy)<thr) dark++;
+        }
+      }
+      const ratio=tot?dark/tot:0;
+      if(ratio>0.38 && ratio>bestRatio){ best=d; bestRatio=ratio; }
+    });
+    return best;   // 塗られていなければ -1
+  };
+  const tens=readSeatRow(L.seatDigits.tens, 0);
+  const ones=readSeatRow(L.seatDigits.ones, 1);
+  let seat=null;
+  if(ones>=0) seat=(tens>=0?tens:0)*10+ones;
+  else if(tens>=0) seat=tens*10;
+
+  return {answers, seat};
 }
 
 function gradeAnswers(ans, test){
@@ -730,6 +800,10 @@ function renderTestList(){
     ak.className="btn-sub"; ak.style.cssText="padding:6px 14px;margin-left:6px;";
     ak.textContent="正答"; ak.onclick=()=>editAnswerKey(t);
     td.appendChild(ak);
+    const dup=document.createElement("button");
+    dup.className="btn-sub"; dup.style.cssText="padding:6px 14px;margin-left:6px;";
+    dup.textContent="複製"; dup.onclick=()=>openDuplicate(t);
+    td.appendChild(dup);
     const del=document.createElement("button");
     del.className="btn-sub"; del.style.cssText="padding:6px 14px;margin-left:6px;color:var(--red);border-color:var(--red);";
     del.textContent="削除"; del.onclick=()=>deleteTest(t);
@@ -806,6 +880,73 @@ async function saveAnswerKeyEdit(){
     alert("正答を保存しました。");
   }
   document.getElementById("akeyEditCard").classList.add("hide");
+}
+
+/* ---------- テストの複製 ---------- */
+let DUP_SOURCE=null;
+function openDuplicate(test){
+  DUP_SOURCE=test;
+  document.getElementById("dupTitle").textContent=`テストを複製：${test.test_name}（${test.subject}・${test.num_questions}問）`;
+  const g=document.getElementById("dup_grade"); g.innerHTML="";
+  ["中1","中2","中3","高1","高2","高3"].forEach(v=>g.add(new Option(v,v)));
+  g.value=test.grade;
+  const c=document.getElementById("dup_class"); c.innerHTML="";
+  for(let i=1;i<=15;i++) c.add(new Option(i+"組",i+"組"));
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(a=>c.add(new Option(a+"組",a+"組")));
+  document.getElementById("dup_name").value=test.test_name;
+  const numRow=document.getElementById("dupNumRow");
+  if(test.use_preprint){
+    numRow.classList.remove("hide");
+    document.getElementById("dup_num").value=test.num_students||"";
+  }else{
+    numRow.classList.add("hide");
+  }
+  const card=document.getElementById("dupCard");
+  card.classList.remove("hide");
+  card.scrollIntoView({behavior:"smooth"});
+}
+
+async function runDuplicate(){
+  const src=DUP_SOURCE; if(!src) return;
+  const grade=document.getElementById("dup_grade").value;
+  const cls=document.getElementById("dup_class").value;
+  const name=document.getElementById("dup_name").value.trim();
+  if(!name){ alert("テスト名を入力してください"); return; }
+  let numStudents=null;
+  if(src.use_preprint){
+    numStudents=+document.getElementById("dup_num").value;
+    if(!numStudents||numStudents<1){ alert("人数を入力してください"); return; }
+  }
+  const rec={
+    school_id:SCHOOL.id, grade, class_name:cls,
+    subject:src.subject, test_name:name,
+    num_questions:src.num_questions, num_choices:src.num_choices,
+    answer_key:src.answer_key,
+    use_preprint:src.use_preprint||false, num_students:numStudents
+  };
+  const {data,error}=await sb.from("tests").insert(rec).select().single();
+  if(error){ alert("複製エラー: "+error.message); return; }
+
+  // 事前印字テストなら、新しい16桁IDの名簿を作る（システム全体で重複しないよう確認）
+  if(src.use_preprint){
+    const {data:existing, error:exErr}=await sb.from("roster").select("student_id");
+    if(exErr){ alert("既存IDの確認エラー: "+exErr.message); return; }
+    const used=new Set((existing||[]).map(r=>r.student_id));
+    const rosterRows=[];
+    for(let seat=1;seat<=numStudents;seat++){
+      let id=gen16digitId();
+      while(used.has(id)) id=gen16digitId();
+      used.add(id);
+      rosterRows.push({test_id:data.id, school_id:SCHOOL.id, seat_number:seat, student_id:id});
+    }
+    const {error:rErr}=await sb.from("roster").insert(rosterRows);
+    if(rErr){ alert("名簿の作成エラー: "+rErr.message); return; }
+  }
+
+  TESTS.unshift(data);
+  document.getElementById("dupCard").classList.add("hide");
+  renderTestList();
+  alert(`複製しました：${grade} ${cls}「${name}」\nテスト一覧から用紙の印刷ができます。`);
 }
 
 async function deleteTest(test){
@@ -897,12 +1038,25 @@ function buildTeacherDetail(r, test, scoreInput){
   return wrap;
 }
 
+let CURRENT_RESULT_TEST=null;
+async function deleteAllResults(testId){
+  const test=CURRENT_RESULT_TEST;
+  if(!confirm(`このテストの採点結果をすべて削除しますか？\n（テスト自体と正答は残ります。採点をやり直したいときに使います）\nこの操作は元に戻せません。`)) return;
+  const {error}=await sb.from("results").delete().eq("test_id",testId);
+  if(error){ alert("削除エラー: "+error.message); return; }
+  alert("採点結果をすべて削除しました。");
+  if(test) showResults(test);
+}
+
 async function showResults(test){
-  const {data}=await sb.from("results").select("*").eq("test_id",test.id).order("seat_number");
+  const {data}=await sb.from("results").select("*").eq("test_id",test.id);
+  if(data) data.sort((a,b)=>(parseInt(a.seat_number)||9999)-(parseInt(b.seat_number)||9999));
   const card=document.getElementById("resultCard"); card.classList.remove("hide");
   const reportCount=(data||[]).filter(r=>r.report_flag).length;
   const badge=reportCount>0?` <span style="background:var(--red);color:#fff;font-size:12px;padding:3px 10px;border-radius:20px;">⚠ ${reportCount}件の報告</span>`:"";
-  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}`;
+  const bulkDel=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;color:var(--red);border-color:var(--red);margin-left:10px;" onclick="deleteAllResults('${test.id}')">採点結果を全削除</button>`:"";
+  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}${bulkDel}`;
+  CURRENT_RESULT_TEST=test;
   const body=document.getElementById("resultBody"); body.innerHTML="";
   (data||[]).forEach(r=>{
     const tr=document.createElement("tr");
@@ -941,6 +1095,17 @@ async function showResults(test){
     det.className="btn-sub"; det.style.cssText="padding:6px 14px;margin-left:6px;";
     det.textContent="詳細";
     tdBtn.appendChild(det);
+    // この生徒の結果を削除
+    const rdel=document.createElement("button");
+    rdel.className="btn-sub"; rdel.style.cssText="padding:6px 10px;margin-left:6px;color:var(--red);border-color:var(--red);font-size:12px;";
+    rdel.textContent="削除";
+    rdel.onclick=async()=>{
+      if(!confirm(`出席番号${r.seat_number||"？"}（${r.student_name||r.student_id}）の採点結果を削除しますか？\nこの操作は元に戻せません。`)) return;
+      const {error}=await sb.from("results").delete().eq("id",r.id);
+      if(error){ alert("削除エラー: "+error.message); return; }
+      showResults(test);
+    };
+    tdBtn.appendChild(rdel);
     tr.appendChild(tdBtn);
     body.appendChild(tr);
 
