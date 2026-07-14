@@ -363,8 +363,9 @@ function sheetLayout(Q, C){
   const seatR=11;
   const seatDigit=(rowY)=>{ const a=[]; for(let d=0;d<10;d++) a.push({x:250+d*56, y:rowY}); return a; };
   const seatDigits={ tens:seatDigit(292), ones:seatDigit(322), r:seatR };
-  const seatMarks=[{x:38,y:292},{x:38,y:322}];   // 出席番号行の位置補正用
-  return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom, seatDigits, seatMarks};
+  const seatMarks=[{x:38,y:292},{x:38,y:322}];   // 出席番号行の位置補正用（左端）
+  const seatColMarks=[]; for(let d=0;d<10;d++) seatColMarks.push({x:250+d*56, y:262});  // 各数字の真上（横位置の補正用）
+  return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom, seatDigits, seatMarks, seatColMarks, areaX0, areaY0, colW, cellW};
 }
 
 /* ---------- マークシート印刷（OMR対応・四隅マーカー付き） ---------- */
@@ -408,6 +409,10 @@ async function printSheet(testArg){
     L.seatMarks.forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-13)}px;top:${px(m.y-8)}px;" width="${px(26)}" height="${px(16)}"><rect width="${px(26)}" height="${px(16)}" fill="#000"/></svg>`;
     });
+    // 各数字の真上の補正マーク（出席番号の横位置を数字ごとに正確に合わせる）
+    L.seatColMarks.forEach(m=>{
+      el+=`<svg style="position:absolute;left:${px(m.x-7)}px;top:${px(m.y-5)}px;" width="${px(14)}" height="${px(10)}"><rect width="${px(14)}" height="${px(10)}" fill="#000"/></svg>`;
+    });
     const seatVal = seat ? parseInt(seat.seat_number) : null;
     const drawSeatRow=(pts, labelTxt, digitVal)=>{
       el+=`<div style="position:absolute;left:${px(120)}px;top:${px(pts[0].y-9)}px;font-size:${px(13)}px;">出席番号 ${labelTxt}</div>`;
@@ -425,16 +430,33 @@ async function printSheet(testArg){
     // タイトル
     el+=`<div style="position:absolute;left:0;top:${px(75)}px;width:100%;text-align:center;font-size:${px(26)}px;font-weight:bold;">マークシート解答用紙</div>`;
     el+=`<div style="position:absolute;left:0;top:${px(112)}px;width:100%;text-align:center;font-size:${px(19)}px;">${t.subject}　${t.test_name}</div>`;
-    // 記入欄
+    // 記入欄（出席番号は下のマーク欄で表すため、ここには載せない）
     const info = seat
       ? `<tr><td>ID：<b style="letter-spacing:1px;">${seat.student_id}</b></td><td>学年：${t.grade}</td><td>クラス：${t.class_name}</td></tr>
-         <tr><td>出席番号：<b>${seat.seat_number}</b></td><td colspan="2">氏名：________________________</td></tr>`
+         <tr><td colspan="3">氏名：________________________</td></tr>`
       : `<tr><td>ID：______________</td><td>学年：${t.grade}</td><td>クラス：${t.class_name}</td></tr>
-         <tr><td>出席番号：__________</td><td colspan="2">氏名：________________________</td></tr>`;
+         <tr><td colspan="3">氏名：________________________</td></tr>`;
     el+=`<div style="position:absolute;left:${px(90)}px;top:${px(150)}px;width:${px(820)}px;">
       <table style="width:100%;border-collapse:collapse;font-size:${px(17)}px;">
         ${info.replace(/<td/g,'<td style="border:1px solid #000;padding:'+px(9)+'px;"')}
       </table></div>`;
+    // 設問エリアの罫線（見やすさのため。読み取りに影響しない薄いグレー）
+    // ※#999は読み取りの「黒」判定しきい値より明るいため、マーク認識には影響しません
+    for(let col=0;col<L.cols;col++){
+      const rowsInCol=Math.min(L.perCol, Q-col*L.perCol);
+      if(rowsInCol<=0) break;
+      const bx=L.areaX0+col*L.colW+L.cellW*0.1;
+      const bw=L.cellW*(C+1.9);
+      const by=L.areaY0;
+      const bh=L.rowH*rowsInCol;
+      let lines=`<rect x="0.5" y="0.5" width="${px(bw)-1}" height="${px(bh)-1}" fill="none" stroke="#999" stroke-width="1"/>`;
+      for(let k=1;k<rowsInCol;k++){
+        lines+=`<line x1="0" y1="${px(L.rowH*k)}" x2="${px(bw)}" y2="${px(L.rowH*k)}" stroke="#999" stroke-width="1"/>`;
+      }
+      const vx=L.cellW*1.25;   // 問題番号とマーク円の間の縦線
+      lines+=`<line x1="${px(vx)}" y1="0" x2="${px(vx)}" y2="${px(bh)}" stroke="#999" stroke-width="1"/>`;
+      el+=`<svg style="position:absolute;left:${px(bx)}px;top:${px(by)}px;" width="${px(bw)}" height="${px(bh)}">${lines}</svg>`;
+    }
     // 問題番号とマーク円
     for(let q=1;q<=Q;q++){
       const n=L.numbers[q];
@@ -736,7 +758,13 @@ function omrRead(canvas, test){
       if(tot>0 && dark/tot>0.38) answers[q].push(labels[c]);
     });
   }
-  // 出席番号マークを読む（十の位・一の位。行ごとの左マークで位置補正）
+  // 出席番号マークを読む（十の位・一の位）
+  // 縦：行の左マークで補正／横：各数字の真上のマークで数字ごとに補正
+  const seatColDx=L.seatColMarks.map(m=>{
+    const p=mapPt(m.x,m.y);
+    const f=findBlob(p.x-13*scalePx, p.y-12*scalePx, p.x+13*scalePx, p.y+12*scalePx, Math.max(5,9*scalePx));
+    return f ? (f.x-p.x) : null;
+  });
   const readSeatRow=(pts, markIdx)=>{
     const m=L.seatMarks[markIdx];
     const pm=mapPt(m.x,m.y);
@@ -745,13 +773,14 @@ function omrRead(canvas, test){
     let best=-1, bestRatio=0;
     pts.forEach((pt,d)=>{
       const p=mapPt(pt.x,pt.y);
+      const dxd=(seatColDx[d]!==null)?seatColDx[d]:off.dx;   // 数字ごとの横補正（無ければ行の横ずれで代用）
       const r=L.seatDigits.r*scalePx*0.72;
       let dark=0, tot=0;
       for(let dy=-r;dy<=r;dy+=1.5){
         for(let dx=-r;dx<=r;dx+=1.5){
           if(dx*dx+dy*dy>r*r) continue;
           tot++;
-          if(bright(p.x+off.dx+dx, p.y+off.dy+dy)<thr) dark++;
+          if(bright(p.x+dxd+dx, p.y+off.dy+dy)<thr) dark++;
         }
       }
       const ratio=tot?dark/tot:0;
