@@ -316,11 +316,14 @@ const MARKERS=[{x:55,y:55},{x:945,y:55},{x:55,y:1359},{x:945,y:1359}];
 const MARKER_SIZE=36;
 
 function sheetLayout(Q, C){
-  // 列数（1列あたり最大25問、最大4列）
-  let cols=1;
-  if(Q>25) cols=2;
-  if(Q>50) cols=3;
-  if(Q>75) cols=4;
+  // 列数：問題数から決めるが、選択肢が多いときは横幅を確保するため列数を制限する
+  // （選択肢が多いのに列を増やすと、マーク円が小さくなりすぎて塗れない・読めないため）
+  let colsByQ=1;
+  if(Q>25) colsByQ=2;
+  if(Q>50) colsByQ=3;
+  if(Q>75) colsByQ=4;
+  const colsByWidth=Math.max(1, Math.floor(840/(30.5*(C+1.7))));  // 円の直径を確保できる最大列数
+  const cols=Math.min(colsByQ, colsByWidth);
   const perCol=Math.ceil(Q/cols);
 
   // マーク欄を置く領域
@@ -365,7 +368,17 @@ function sheetLayout(Q, C){
   const seatDigits={ tens:seatDigit(292), ones:seatDigit(322), r:seatR };
   const seatMarks=[{x:38,y:292},{x:38,y:322}];   // 出席番号行の位置補正用（左端）
   const seatColMarks=[]; for(let d=0;d<10;d++) seatColMarks.push({x:250+d*56, y:262});  // 各数字の真上（横位置の補正用）
-  return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom, seatDigits, seatMarks, seatColMarks, areaX0, areaY0, colW, cellW};
+  // 枚数マーク（1枚目/2枚目の判別用。2枚組のときだけ使う。印刷時に黒塗り済み）
+  const pageMarks=[{x:880,y:292},{x:880,y:322}];
+  return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom, seatDigits, seatMarks, seatColMarks, pageMarks, areaX0, areaY0, colW, cellW};
+}
+
+// この構成は2枚組にすべきか？（1枚だと円が小さくなりすぎる場合に分割）
+function splitOf(Q, C){
+  const L=sheetLayout(Q, C);
+  if(L.bubbleR>=9) return null;             // 1枚で十分な大きさ → 分割不要
+  const Qa=Math.ceil(Q/2);
+  return {Qa, Qb:Q-Qa};                      // 1枚目にQa問、2枚目に残り
 }
 
 /* ---------- マークシート印刷（OMR対応・四隅マーカー付き） ---------- */
@@ -373,7 +386,9 @@ async function printSheet(testArg){
   const t=testArg || SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
   const labels="ABCDEFGHIJ".split("");
   const Q=t.num_questions, C=t.num_choices;
-  const L=sheetLayout(Q,C);
+  // 円が小さくなりすぎる構成は自動で2枚組にする（1枚目に前半、2枚目に後半）
+  const split=splitOf(Q,C);
+  const L=split ? sheetLayout(split.Qa, C) : sheetLayout(Q,C);
 
   // 紙上の座標 → 画面px（A4=794×1123px相当で描く）
   const S=794/SHEET_W;
@@ -389,47 +404,61 @@ async function printSheet(testArg){
     seats=roster;
   }
 
-  // 1枚分の用紙HTML
-  const makeSheet=(seat)=>{
+  // 1枚分の用紙HTML（pageNo: 2枚組なら1か2、1枚完結ならnull）
+  const makeSheet=(seat, pageNo)=>{
+    // このページのレイアウト・問題数・通し番号のはじまり
+    const LL = (split && pageNo===2) ? sheetLayout(split.Qb, C) : L;
+    const PQ = split ? (pageNo===2 ? split.Qb : split.Qa) : Q;
+    const OFF = (split && pageNo===2) ? split.Qa : 0;
     let el="";
     // 四隅マーカー（読み取りの基準になる黒い四角。絶対に消さない）
-    // ※背景色ではなくSVG図形として描く：ブラウザの「背景を印刷しない」設定でも必ず印刷される
     MARKERS.forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-MARKER_SIZE/2)}px;top:${px(m.y-MARKER_SIZE/2)}px;" width="${px(MARKER_SIZE)}" height="${px(MARKER_SIZE)}"><rect width="${px(MARKER_SIZE)}" height="${px(MARKER_SIZE)}" fill="#000"/></svg>`;
     });
-    // 行ごとのタイミングマーク（読み取り精度向上のための小さな黒四角）
-    L.rowMarks.forEach(m=>{
+    // 行ごとのタイミングマーク
+    LL.rowMarks.forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-13)}px;top:${px(m.y-8)}px;" width="${px(26)}" height="${px(16)}"><rect width="${px(26)}" height="${px(16)}" fill="#000"/></svg>`;
     });
-    // 列ごとのタイミングマーク（上端・下端。横方向の補正用）
-    L.colMarksTop.concat(L.colMarksBottom).forEach(m=>{
-      el+=`<svg style="position:absolute;left:${px(m.x-8)}px;top:${px(m.y-6)}px;" width="${px(16)}" height="${px(12)}"><rect width="${px(16)}" height="${px(12)}" fill="#000"/></svg>`;
+    // 列ごとのタイミングマーク（上端・下端）
+    const cmW=Math.min(16, LL.cellW*0.55);
+    LL.colMarksTop.concat(LL.colMarksBottom).forEach(m=>{
+      el+=`<svg style="position:absolute;left:${px(m.x-cmW/2)}px;top:${px(m.y-6)}px;" width="${px(cmW)}" height="${px(12)}"><rect width="${px(cmW)}" height="${px(12)}" fill="#000"/></svg>`;
     });
-    // 出席番号マーク欄（十の位・一の位）＋その行の左マーク
-    L.seatMarks.forEach(m=>{
+    // 出席番号マーク欄まわり
+    LL.seatMarks.forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-13)}px;top:${px(m.y-8)}px;" width="${px(26)}" height="${px(16)}"><rect width="${px(26)}" height="${px(16)}" fill="#000"/></svg>`;
     });
-    // 各数字の真上の補正マーク（出席番号の横位置を数字ごとに正確に合わせる）
-    L.seatColMarks.forEach(m=>{
+    LL.seatColMarks.forEach(m=>{
       el+=`<svg style="position:absolute;left:${px(m.x-7)}px;top:${px(m.y-5)}px;" width="${px(14)}" height="${px(10)}"><rect width="${px(14)}" height="${px(10)}" fill="#000"/></svg>`;
     });
     // 出席番号マークは事前に塗らず、生徒自身に塗ってもらう
-    const seatVal = null;
-    const drawSeatRow=(pts, labelTxt, digitVal)=>{
+    const drawSeatRow=(pts, labelTxt)=>{
       el+=`<div style="position:absolute;left:${px(120)}px;top:${px(pts[0].y-9)}px;font-size:${px(13)}px;">出席番号 ${labelTxt}</div>`;
       pts.forEach((p,d)=>{
-        const filled = (digitVal!==null && d===digitVal);
-        const r=L.seatDigits.r;
+        const r=LL.seatDigits.r;
         el+=`<svg style="position:absolute;left:${px(p.x-r)}px;top:${px(p.y-r)}px;" width="${px(r*2)}" height="${px(r*2)}">
-          <circle cx="${px(r)}" cy="${px(r)}" r="${px(r-1)}" fill="${filled?'#000':'none'}" stroke="#000" stroke-width="1.5"/>
-          ${filled?'':`<text x="${px(r)}" y="${px(r)}" text-anchor="middle" dominant-baseline="central" font-size="${px(r)}" fill="#555">${d}</text>`}
+          <circle cx="${px(r)}" cy="${px(r)}" r="${px(r-1)}" fill="none" stroke="#000" stroke-width="1.5"/>
+          <text x="${px(r)}" y="${px(r)}" text-anchor="middle" dominant-baseline="central" font-size="${px(r)}" fill="#555">${d}</text>
         </svg>`;
       });
     };
-    drawSeatRow(L.seatDigits.tens, "十の位", seatVal!==null ? Math.floor(seatVal/10)%10 : null);
-    drawSeatRow(L.seatDigits.ones, "一の位", seatVal!==null ? seatVal%10 : null);
+    drawSeatRow(LL.seatDigits.tens, "十の位");
+    drawSeatRow(LL.seatDigits.ones, "一の位");
+    // 枚数マーク（2枚組のときだけ。該当ページを印刷時に黒塗り済みにする）
+    if(split){
+      LL.pageMarks.forEach((m,idx)=>{
+        const filled=(idx+1)===pageNo;
+        const r=LL.seatDigits.r;
+        el+=`<svg style="position:absolute;left:${px(m.x-r)}px;top:${px(m.y-r)}px;" width="${px(r*2)}" height="${px(r*2)}">
+          <circle cx="${px(r)}" cy="${px(r)}" r="${px(r-1)}" fill="${filled?'#000':'none'}" stroke="#000" stroke-width="1.5"/>
+          ${filled?'':`<text x="${px(r)}" y="${px(r)}" text-anchor="middle" dominant-baseline="central" font-size="${px(r)}" fill="#555">${idx+1}</text>`}
+        </svg>`;
+      });
+      el+=`<div style="position:absolute;left:${px(830)}px;top:${px(263)}px;font-size:${px(11)}px;color:#555;">枚目</div>`;
+    }
     // タイトル
-    el+=`<div style="position:absolute;left:0;top:${px(75)}px;width:100%;text-align:center;font-size:${px(26)}px;font-weight:bold;">マークシート解答用紙</div>`;
+    const pageLabel=split?`（${pageNo}枚目／全2枚）`:"";
+    el+=`<div style="position:absolute;left:0;top:${px(75)}px;width:100%;text-align:center;font-size:${px(26)}px;font-weight:bold;">マークシート解答用紙${pageLabel}</div>`;
     el+=`<div style="position:absolute;left:0;top:${px(112)}px;width:100%;text-align:center;font-size:${px(19)}px;">${t.subject}　${t.test_name}</div>`;
     // 記入欄（出席番号は下のマーク欄で表すため、ここには載せない）
     const info = seat
@@ -441,40 +470,44 @@ async function printSheet(testArg){
       <table style="width:100%;border-collapse:collapse;font-size:${px(17)}px;">
         ${info.replace(/<td/g,'<td style="border:1px solid #000;padding:'+px(9)+'px;"')}
       </table></div>`;
-    // 設問エリアの罫線（見やすさのため。読み取りに影響しない薄いグレー）
-    // ※#999は読み取りの「黒」判定しきい値より明るいため、マーク認識には影響しません
-    for(let col=0;col<L.cols;col++){
-      const rowsInCol=Math.min(L.perCol, Q-col*L.perCol);
+    // 設問エリアの罫線
+    for(let col=0;col<LL.cols;col++){
+      const rowsInCol=Math.min(LL.perCol, PQ-col*LL.perCol);
       if(rowsInCol<=0) break;
-      const bx=L.areaX0+col*L.colW+L.cellW*0.1;
-      const bw=L.cellW*(C+1.9);
-      const by=L.areaY0;
-      const bh=L.rowH*rowsInCol;
+      const bx=LL.areaX0+col*LL.colW+LL.cellW*0.1;
+      const bw=LL.cellW*(C+1.45);
+      const by=LL.areaY0;
+      const bh=LL.rowH*rowsInCol;
       let lines=`<rect x="0.5" y="0.5" width="${px(bw)-1}" height="${px(bh)-1}" fill="none" stroke="#999" stroke-width="1"/>`;
       for(let k=1;k<rowsInCol;k++){
-        lines+=`<line x1="0" y1="${px(L.rowH*k)}" x2="${px(bw)}" y2="${px(L.rowH*k)}" stroke="#999" stroke-width="1"/>`;
+        lines+=`<line x1="0" y1="${px(LL.rowH*k)}" x2="${px(bw)}" y2="${px(LL.rowH*k)}" stroke="#999" stroke-width="1"/>`;
       }
-      const vx=L.cellW*1.25;   // 問題番号とマーク円の間の縦線
+      const vx=LL.cellW*1.25;
       lines+=`<line x1="${px(vx)}" y1="0" x2="${px(vx)}" y2="${px(bh)}" stroke="#999" stroke-width="1"/>`;
       el+=`<svg style="position:absolute;left:${px(bx)}px;top:${px(by)}px;" width="${px(bw)}" height="${px(bh)}">${lines}</svg>`;
     }
-    // 問題番号とマーク円
-    for(let q=1;q<=Q;q++){
-      const n=L.numbers[q];
-      el+=`<div style="position:absolute;left:${px(n.x-24)}px;top:${px(n.y-10)}px;width:${px(48)}px;text-align:center;font-size:${px(16)}px;font-weight:bold;">${q}</div>`;
-      L.bubbles[q].forEach((b,c)=>{
-        const r=L.bubbleR;
+    // 問題番号（通し番号で表示）とマーク円
+    for(let q=1;q<=PQ;q++){
+      const n=LL.numbers[q];
+      el+=`<div style="position:absolute;left:${px(n.x-24)}px;top:${px(n.y-10)}px;width:${px(48)}px;text-align:center;font-size:${px(16)}px;font-weight:bold;">${q+OFF}</div>`;
+      LL.bubbles[q].forEach((b,c)=>{
+        const r=LL.bubbleR;
         el+=`<div style="position:absolute;left:${px(b.x-r)}px;top:${px(b.y-r)}px;width:${px(r*2)}px;height:${px(r*2)}px;border:1.5px solid #000;border-radius:50%;text-align:center;line-height:${px(r*2-3)}px;font-size:${px(r)}px;color:#555;">${labels[c]}</div>`;
       });
     }
     // 注意書き
-    el+=`<div style="position:absolute;left:${px(150)}px;top:${px(1342)}px;width:${px(700)}px;text-align:center;font-size:${px(12)}px;color:#555;">※ 解答と自分の出席番号（十の位・一の位）を黒く塗りつぶしてください。黒い四角には触れないでください。</div>`;
+    const note2=split?"2枚とも自分の出席番号を塗ってください。":"";
+    el+=`<div style="position:absolute;left:${px(150)}px;top:${px(1342)}px;width:${px(700)}px;text-align:center;font-size:${px(12)}px;color:#555;">※ 解答と自分の出席番号を黒く塗りつぶしてください。${note2}黒い四角には触れないでください。</div>`;
     return `<div class="sheet" style="position:relative;width:794px;height:1123px;background:#fff;">${el}</div>`;
   };
 
   let pages="";
-  if(seats){ seats.forEach(s=>{ pages+=makeSheet(s); }); }
-  else{ pages=makeSheet(null); }
+  const addUnit=(seat)=>{
+    if(split){ pages+=makeSheet(seat,1)+makeSheet(seat,2); }
+    else{ pages+=makeSheet(seat,null); }
+  };
+  if(seats){ seats.forEach(s=>addUnit(s)); }
+  else{ addUnit(null); }
 
   const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
     <title>マークシート ${t.subject} ${t.test_name}</title>
@@ -577,43 +610,81 @@ async function startGrading(){
 
   prog.textContent=`採点中… 全${images.length}枚`;
 
-  let done=0, failed=0;
+  // まず全ページを読み取る
+  const isSplit=!!splitOf(test.num_questions, test.num_choices);
+  const reads=[];
   for(let i=0;i<images.length;i++){
-    const cv=images[i];
-    try{
-      const read=omrRead(cv, test);          // ← AIを使わず、コードだけで読み取る
-      const isFail=!!read.error;
-      if(isFail) failed++;
-      const ans=read.answers||{};
-      const graded=gradeAnswers(ans, test);
+    let r;
+    try{ r=omrRead(images[i], test); }catch(e){ console.error(e); r={error:String(e)}; }
+    reads.push(r);
+    prog.textContent=`読み取り中… ${i+1}/${images.length} 枚`;
+  }
 
-      // ID・出席番号の割り当て：用紙の出席番号マークを最優先、読めなければページ順
+  // 2枚組なら、出席番号と枚数マークで1人分（2枚）にまとめる
+  let units=[];   // {seat(数値|null), answers, fail}
+  if(isSplit){
+    let open=null;   // 2枚目待ちの直前グループ
+    reads.forEach(r=>{
+      if(r.error){ units.push({seat:null, answers:{}, fail:true}); return; }
+      const s=(typeof r.seat==="number"&&r.seat>0)?r.seat:null;
+      if(r.page===2){
+        let g=null;
+        if(s!==null) g=units.find(u=>u.seat===s && !u.fail);
+        if(!g) g=open;
+        if(!g){ g={seat:s, answers:{}, fail:false, missing1:true}; units.push(g); }
+        Object.assign(g.answers, r.answers||{});
+        if(g.seat===null && s!==null) g.seat=s;
+        g.has2=true;
+        if(g===open) open=null;
+      }else{
+        const g={seat:s, answers:Object.assign({},r.answers||{}), fail:false, has1:true};
+        units.push(g); open=g;
+      }
+    });
+  }else{
+    reads.forEach(r=>{
+      if(r.error){ units.push({seat:null, answers:{}, fail:true}); return; }
+      const s=(typeof r.seat==="number"&&r.seat>0)?r.seat:null;
+      units.push({seat:s, answers:r.answers||{}, fail:false, has1:true, has2:true});
+    });
+  }
+
+  prog.textContent=`採点中… 全${units.length}名分`;
+  let done=0, failed=0;
+  for(let i=0;i<units.length;i++){
+    const u=units[i];
+    try{
+      if(u.fail) failed++;
+      const graded=gradeAnswers(u.answers, test);
+      const incomplete=isSplit && !(u.has1&&u.has2);
       let sid, seat;
-      const readSeat=(typeof read.seat==="number" && read.seat>0) ? read.seat : null;
+      const readSeat=u.seat;
       if(roster){
         let entry=null;
-        if(readSeat!==null) entry=roster.find(x=>x.seat_number===readSeat);   // マークから照合
-        if(!entry) entry=roster[i];                                            // 予備：ページ順
+        if(readSeat!==null) entry=roster.find(x=>x.seat_number===readSeat);
+        if(!entry) entry=roster[i];
         sid  = entry ? entry.student_id : ("P"+String(readSeat||i+1).padStart(3,"0"));
         seat = entry ? String(entry.seat_number) : String(readSeat||i+1);
       }else{
         seat = String(readSeat||i+1);
         sid  = "P"+String(readSeat||i+1).padStart(3,"0");
       }
-
+      let nameNote="";
+      if(u.fail) nameNote="（読取失敗・要確認）";
+      else if(incomplete) nameNote="（"+(u.has1?"2":"1")+"枚目が未読取・要確認）";
       await sb.from("results").insert({
         test_id:test.id, school_id:SCHOOL.id,
         student_id:sid,
-        student_name: isFail ? "（読取失敗・要確認）" : "",
+        student_name: nameNote,
         grade:test.grade, class_name:test.class_name,
         seat_number:seat,
-        answers:ans, score:graded.score, total:test.num_questions,
+        answers:u.answers, score:graded.score, total:test.num_questions,
         detail:graded.detail
       });
     }catch(e){ console.error(e); failed++; }
-    done++; prog.textContent=`採点中… ${done}/${images.length} 枚完了`;
+    done++; prog.textContent=`採点中… ${done}/${units.length} 名分完了`;
   }
-  prog.textContent=`採点完了！ ${images.length}枚を処理しました`+
+  prog.textContent=`採点完了！ ${units.length}名分（${images.length}枚）を処理しました`+
     (failed>0?`（うち${failed}枚は読取失敗。③タブで確認・手修正してください）`:"")+
     `。③のタブで結果を確認できます。`;
 }
@@ -703,7 +774,28 @@ function omrRead(canvas, test){
   };
   const scalePx=Math.hypot(TR.x-TL.x, TR.y-TL.y)/(M1.x-M0.x);
 
-  const L=sheetLayout(test.num_questions, test.num_choices);
+  // 2枚組テストか？その場合はまず「枚数マーク」（印刷時に黒塗り済み）を読んで何枚目か判別する
+  const split=splitOf(test.num_questions, test.num_choices);
+  let page=null;
+  if(split){
+    const pm=[{x:880,y:292},{x:880,y:322}];   // 枚数マークの位置（固定）
+    const fillOf=(m)=>{
+      const p=mapPt(m.x,m.y);
+      const r=11*scalePx*0.72;
+      let dark=0, tot=0;
+      for(let dy=-r;dy<=r;dy+=1.5) for(let dx=-r;dx<=r;dx+=1.5){
+        if(dx*dx+dy*dy>r*r) continue; tot++;
+        if(bright(p.x+dx,p.y+dy)<thr) dark++;
+      }
+      return tot?dark/tot:0;
+    };
+    const f1=fillOf(pm[0]), f2=fillOf(pm[1]);
+    if(f1>0.38||f2>0.38) page=(f1>=f2)?1:2;
+    if(page===null) return {error:"枚数マーク（1枚目/2枚目）が読めません"};
+  }
+  const PQ = split ? (page===2?split.Qb:split.Qa) : test.num_questions;
+  const OFF = (split && page===2) ? split.Qa : 0;
+  const L=sheetLayout(PQ, test.num_choices);
 
   // 行ごとのタイミングマークを探して、行単位のずれ（紙の反りなど）を補正する
   const rowOffset=[];   // 行番号ごとの {dx,dy}
@@ -715,10 +807,12 @@ function omrRead(canvas, test){
   });
 
   // 列ごとのタイミングマーク（上端・下端）を探して、横方向のずれを列ごとに補正する
+  // 探索窓はマーク間隔より狭くする（隣のマークが窓に入ると補正が壊れるため）
+  const cmWin=Math.min(14, L.cellW*0.42);
   const findColMark=(m)=>{
     const p=mapPt(m.x, m.y);
-    const winX=14*scalePx, winY=16*scalePx;
-    const found=findBlob(p.x-winX, p.y-winY, p.x+winX, p.y+winY, Math.max(5, 10*scalePx));
+    const winX=cmWin*scalePx, winY=16*scalePx;
+    const found=findBlob(p.x-winX, p.y-winY, p.x+winX, p.y+winY, Math.max(5, Math.min(10, L.cellW*0.35)*scalePx));
     return found ? (found.x-p.x) : null;
   };
   const dxTop=L.colMarksTop.map(findColMark);
@@ -736,8 +830,9 @@ function omrRead(canvas, test){
   // 各マーク円の内側の黒率を測る（行マークの補正を加えた正確な位置で）
   const labels="ABCDEFGHIJ".split("");
   const answers={};
-  for(let q=1;q<=test.num_questions;q++){
-    answers[q]=[];
+  for(let q=1;q<=PQ;q++){
+    const gq=q+OFF;                          // テスト全体での通し番号
+    answers[gq]=[];
     const row=(q-1)%L.perCol;
     const col=Math.floor((q-1)/L.perCol);
     const off=rowOffset[row]||{dx:0,dy:0};
@@ -756,7 +851,7 @@ function omrRead(canvas, test){
           if(bright(px_+dx,py_+dy)<thr) dark++;
         }
       }
-      if(tot>0 && dark/tot>0.38) answers[q].push(labels[c]);
+      if(tot>0 && dark/tot>0.38) answers[gq].push(labels[c]);
     });
   }
   // 出席番号マークを読む（十の位・一の位）
@@ -795,7 +890,7 @@ function omrRead(canvas, test){
   if(ones>=0) seat=(tens>=0?tens:0)*10+ones;
   else if(tens>=0) seat=tens*10;
 
-  return {answers, seat};
+  return {answers, seat, page};
 }
 
 function gradeAnswers(ans, test){
