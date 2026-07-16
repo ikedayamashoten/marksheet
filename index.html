@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>管理画面 | マークシート採点システム</title>
+<title>管理画面 | 敷島書店 マークシート採点システム</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -37,7 +37,7 @@
 </head>
 <body>
 <header>
-  <h1>マークシート採点システム</h1>
+  <h1>敷島書店　マークシート採点システム</h1>
   <span class="tag">管理画面</span>
 </header>
 
@@ -57,7 +57,7 @@
   <div class="card">
     <h2>学校を追加</h2>
     <div class="row">
-      <div><label>学校名</label><input id="sName" placeholder="例：池田山高校"></div>
+      <div><label>学校名</label><input id="sName" placeholder="例：敷島高校"></div>
       <div><label>学校コード（ID）</label><input id="sCode" placeholder="例：IKEDA2026"></div>
       <div><label>パスワード</label><input id="sPass" placeholder="例：pass1234"></div>
     </div>
@@ -77,7 +77,7 @@
 <script src="config.js"></script>
 <script>
 // 管理者パスワード（必要なら書き換えてください）
-const ADMIN_PASS = "Zero212232";
+const ADMIN_PASS = "admin0000";
 
 function login(){
   if(document.getElementById("adminPass").value === ADMIN_PASS){
