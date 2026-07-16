@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>先生用画面 | マークシート採点システム</title>
+<title>先生用画面 | 敷島書店 マークシート採点システム</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 <header>
-  <h1>マークシート採点システム</h1>
+  <h1>敷島書店　マークシート採点システム</h1>
   <span class="tag">先生用</span>
   <span class="right" id="schoolLabel"></span>
   <button id="logoutBtn" class="hide" onclick="logout()" style="margin-left:14px;padding:7px 16px;font-size:13px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.4);">ログアウト</button>
@@ -88,7 +88,7 @@
     </div>
     <div class="row c2" style="margin-top:14px;">
       <div><label>問題数</label><input type="number" id="f_qnum" min="1" max="100" value="20"></div>
-      <div><label>選択肢の数（1～10）</label>
+      <div><label>選択肢の数（1～5）</label>
         <select id="f_cnum"></select>
       </div>
     </div>
@@ -212,7 +212,7 @@ function initForm(){
   for(let i=1;i<=15;i++) c.add(new Option(i+"組",i+"組"));
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(a=>c.add(new Option(a+"組",a+"組")));
   const cn=document.getElementById("f_cnum");
-  for(let i=1;i<=10;i++) cn.add(new Option(i+"択",i));
+  for(let i=1;i<=5;i++) cn.add(new Option(i+"択",i));
   cn.value=4;
 }
 
@@ -373,12 +373,9 @@ function sheetLayout(Q, C){
   return {cols, perCol, bubbles, numbers, bubbleR, rowH, rowMarks, colXs, colMarksTop, colMarksBottom, seatDigits, seatMarks, seatColMarks, pageMarks, areaX0, areaY0, colW, cellW};
 }
 
-// この構成は2枚組にすべきか？（1枚だと円が小さくなりすぎる場合に分割）
+// 2枚組は廃止（選択肢を最大5択に制限したため、どの構成でも1枚に収まる）
 function splitOf(Q, C){
-  const L=sheetLayout(Q, C);
-  if(L.bubbleR>=9) return null;             // 1枚で十分な大きさ → 分割不要
-  const Qa=Math.ceil(Q/2);
-  return {Qa, Qb:Q-Qa};                      // 1枚目にQa問、2枚目に残り
+  return null;   // 常に1枚で完結
 }
 
 /* ---------- マークシート印刷（OMR対応・四隅マーカー付き） ---------- */
@@ -912,7 +909,7 @@ function renderTestList(){
   TESTS.filter(t=>!kw||`${t.grade}${t.class_name}${t.subject}${t.test_name}`.includes(kw))
     .forEach(t=>{
     const tr=document.createElement("tr");
-    tr.innerHTML=`<td>${t.grade}</td><td>${t.class_name}</td><td>${t.subject}</td><td>${esc(t.test_name)}</td><td>${t.num_questions}</td>`;
+    tr.innerHTML=`<td>${t.grade}</td><td>${t.class_name}</td><td>${t.subject}</td><td>${esc(t.test_name)} <span style="cursor:pointer;color:var(--gold);font-size:15px;" title="テスト名を変更" onclick="renameTest('${t.id}')">✎</span></td><td>${t.num_questions}</td>`;
     const td=document.createElement("td");
     td.style.whiteSpace="nowrap";
     const b=document.createElement("button"); b.className="btn-sub"; b.style.padding="6px 14px"; b.textContent="結果を見る";
@@ -936,6 +933,21 @@ function renderTestList(){
     tr.appendChild(td);
     body.appendChild(tr);
   });
+}
+
+/* ---------- テスト名の変更 ---------- */
+async function renameTest(testId){
+  const test=TESTS.find(t=>t.id===testId);
+  if(!test) return;
+  const newName=prompt("新しいテスト名を入力してください", test.test_name);
+  if(newName===null) return;                       // キャンセル
+  const name=newName.trim();
+  if(!name){ alert("テスト名が空です"); return; }
+  if(name===test.test_name) return;                // 変更なし
+  const {error}=await sb.from("tests").update({test_name:name}).eq("id",testId);
+  if(error){ alert("変更エラー: "+error.message); return; }
+  test.test_name=name;
+  renderTestList();
 }
 
 /* ---------- 正答の確認・修正 ---------- */
@@ -1163,7 +1175,36 @@ function buildTeacherDetail(r, test, scoreInput){
   return wrap;
 }
 
-let CURRENT_RESULT_TEST=null;
+let CURRENT_RESULT_TEST=null, LAST_RESULTS=[];
+
+/* 採点結果をCSVでダウンロード（Excelでそのまま開ける形式） */
+function downloadCsv(){
+  const test=CURRENT_RESULT_TEST;
+  if(!test || LAST_RESULTS.length===0){ alert("出力する結果がありません"); return; }
+  const Q=test.num_questions;
+  const csvEsc=(v)=>{ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+  // ヘッダ行
+  const head=["学年","クラス","出席番号","氏名","ID","得点","満点"];
+  for(let q=1;q<=Q;q++) head.push("第"+q+"問");
+  const rows=[head.map(csvEsc).join(",")];
+  // データ行（出席番号の数値順）
+  LAST_RESULTS.forEach(r=>{
+    const row=[r.grade||"", r.class_name||"", r.seat_number||"", r.student_name||"", r.student_id||"", r.score, r.total];
+    for(let q=1;q<=Q;q++){
+      const d=r.detail ? r.detail[q] : null;
+      row.push(d ? (d.ok?"○":"×") : "－");
+    }
+    rows.push(row.map(csvEsc).join(","));
+  });
+  // BOM付きUTF-8（Excelで文字化けしないように）
+  const blob=new Blob(["\uFEFF"+rows.join("\r\n")], {type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`${test.test_name}_採点結果.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 async function deleteAllResults(testId){
   const test=CURRENT_RESULT_TEST;
   if(!confirm(`このテストの採点結果をすべて削除しますか？\n（テスト自体と正答は残ります。採点をやり直したいときに使います）\nこの操作は元に戻せません。`)) return;
@@ -1179,9 +1220,13 @@ async function showResults(test){
   const card=document.getElementById("resultCard"); card.classList.remove("hide");
   const reportCount=(data||[]).filter(r=>r.report_flag).length;
   const badge=reportCount>0?` <span style="background:var(--red);color:#fff;font-size:12px;padding:3px 10px;border-radius:20px;">⚠ ${reportCount}件の報告</span>`:"";
-  const bulkDel=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;color:var(--red);border-color:var(--red);margin-left:10px;" onclick="deleteAllResults('${test.id}')">採点結果を全削除</button>`:"";
-  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}${bulkDel}`;
+  const csvBtn=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;margin-left:10px;" onclick="downloadCsv()">CSVダウンロード</button>`:"";
+  const bulkDel=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;color:var(--red);border-color:var(--red);margin-left:6px;" onclick="deleteAllResults('${test.id}')">採点結果を全削除</button>`:"";
+  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}${csvBtn}${bulkDel}`;
   CURRENT_RESULT_TEST=test;
+  LAST_RESULTS=data||[];
+  // 結果の場所まで自動でスクロール
+  setTimeout(()=>card.scrollIntoView({behavior:"smooth"}), 50);
   const body=document.getElementById("resultBody"); body.innerHTML="";
   (data||[]).forEach(r=>{
     const tr=document.createElement("tr");
