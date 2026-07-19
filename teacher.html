@@ -642,7 +642,7 @@ async function startGrading(){
     reads.forEach(r=>{
       if(r.error){ units.push({seat:null, answers:{}, fail:true}); return; }
       const s=(typeof r.seat==="number"&&r.seat>0)?r.seat:null;
-      units.push({seat:s, answers:r.answers||{}, fail:false, has1:true, has2:true});
+      units.push({seat:s, answers:r.answers||{}, fail:false, has1:true, has2:true, unsure:r.unsure||[]});
     });
   }
 
@@ -669,6 +669,10 @@ async function startGrading(){
       let nameNote="";
       if(u.fail) nameNote="（読取失敗・要確認）";
       else if(incomplete) nameNote="（"+(u.has1?"2":"1")+"枚目が未読取・要確認）";
+      else if(u.unsure && u.unsure.length>0){
+        const list=u.unsure.slice(0,4).map(q=>"第"+q+"問").join("・");
+        nameNote=`（マーク不鮮明: ${list}${u.unsure.length>4?" ほか"+(u.unsure.length-4)+"問":""}・詳細で確認を）`;
+      }
       await sb.from("results").insert({
         test_id:test.id, school_id:SCHOOL.id,
         student_id:sid,
@@ -824,15 +828,33 @@ function omrRead(canvas, test){
     return fallback;
   };
 
-  // 各マーク円の内側の黒率を測る（行マークの補正を加えた正確な位置で）
+  // 各マーク円を測る（行マークの補正を加えた正確な位置で）
+  // 判定は3条件：①内側の黒率 ②実際の濃さ（消し跡・薄い汚れを除外） ③すぐ外側との対比（隣の塗りの映り込みを除外）
   const labels="ABCDEFGHIJ".split("");
   const answers={};
+  const unsure=[];   // 判定が際どかった問題（要確認として結果に表示）
+  const measureCircle=(cx,cy,rIn,rOut)=>{
+    // rInからrOutの範囲（rIn=0なら円の内側全体）を測り、黒率と濃さを返す
+    let dark=0, tot=0, acc=0;
+    const R=rOut;
+    for(let dy=-R;dy<=R;dy+=1.5){
+      for(let dx=-R;dx<=R;dx+=1.5){
+        const d2=dx*dx+dy*dy;
+        if(d2>R*R || d2<rIn*rIn) continue;
+        tot++;
+        const b=bright(cx+dx,cy+dy);
+        if(b<thr){ dark++; acc+=(thr-b)/thr; }   // どれだけ黒に近いかを積算
+      }
+    }
+    return {ratio:tot?dark/tot:0, score:tot?acc/tot:0};
+  };
   for(let q=1;q<=PQ;q++){
     const gq=q+OFF;                          // テスト全体での通し番号
     answers[gq]=[];
     const row=(q-1)%L.perCol;
     const col=Math.floor((q-1)/L.perCol);
     const off=rowOffset[row]||{dx:0,dy:0};
+    let qUnsure=false;
     L.bubbles[q].forEach((b,c)=>{
       const p0=mapPt(b.x,b.y);
       const v=(b.y-M0.y)/(M2.y-M0.y);
@@ -840,16 +862,16 @@ function omrRead(canvas, test){
       const px_=p0.x+colDx(i, v, off.dx);  // 横：列マーク補正（無ければ行マークの横ずれで代用）
       const py_=p0.y+off.dy;               // 縦：行マーク補正
       const r=L.bubbleR*scalePx*0.72;
-      let dark=0, tot=0;
-      for(let dy=-r;dy<=r;dy+=1.5){
-        for(let dx=-r;dx<=r;dx+=1.5){
-          if(dx*dx+dy*dy>r*r) continue;
-          tot++;
-          if(bright(px_+dx,py_+dy)<thr) dark++;
-        }
-      }
-      if(tot>0 && dark/tot>0.38) answers[gq].push(labels[c]);
+      const inner=measureCircle(px_, py_, 0, r);                 // 円の内側
+      const ring =measureCircle(px_, py_, r*1.35, r*1.75);       // すぐ外側のリング
+      const marked = inner.ratio>0.38            // ①内側が十分塗られている
+                  && inner.score>0.30            // ②実際に濃い（薄い消し跡は除外）
+                  && (inner.ratio-ring.ratio)>0.20; // ③外側より明確に濃い（隣の映り込みは除外）
+      if(marked) answers[gq].push(labels[c]);
+      // 際どい判定は要確認として記録
+      if((!marked && inner.ratio>0.30 && inner.score>0.15) || (marked && inner.ratio<0.52)) qUnsure=true;
     });
+    if(qUnsure) unsure.push(gq);
   }
   // 出席番号マークを読む（十の位・一の位）
   // 縦：行の左マークで補正／横：各数字の真上のマークで数字ごとに補正
@@ -887,7 +909,7 @@ function omrRead(canvas, test){
   if(ones>=0) seat=(tens>=0?tens:0)*10+ones;
   else if(tens>=0) seat=tens*10;
 
-  return {answers, seat, page};
+  return {answers, seat, page, unsure};
 }
 
 function gradeAnswers(ans, test){
