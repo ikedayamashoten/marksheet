@@ -146,6 +146,24 @@
       <tbody id="testListBody"></tbody>
     </table>
   </div>
+  <!-- 削除の選択ダイアログ -->
+  <div id="delDialog" class="hide" style="position:fixed;inset:0;background:rgba(20,25,45,0.55);z-index:100;display:flex;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:14px;padding:26px 28px;max-width:480px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,0.25);">
+      <h2 style="margin:0 0 6px;" id="delDlgTitle">削除の種類を選んでください</h2>
+      <p class="note" id="delDlgInfo" style="margin:0 0 16px;"></p>
+      <button class="btn-sub" style="display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;" onclick="doDeleteResultsOnly()">
+        <b>採点した解答（結果）だけを削除</b><br>
+        <span style="font-size:12px;color:#888;">テストと正答は残ります。採点をやり直したいときはこちら。</span>
+      </button>
+      <button class="btn-sub" style="display:block;width:100%;text-align:left;padding:14px 16px;color:var(--red);border-color:var(--red);" onclick="doDeleteTestAll()">
+        <b>テストごとすべて削除</b><br>
+        <span style="font-size:12px;color:#c08080;">テスト・正答・採点結果のすべてが消えます。</span>
+      </button>
+      <div style="text-align:right;margin-top:14px;">
+        <button class="btn-sub" style="padding:8px 18px;" onclick="document.getElementById('delDialog').classList.add('hide')">キャンセル</button>
+      </div>
+    </div>
+  </div>
   <div class="card hide" id="dupCard">
     <h2 id="dupTitle">テストを複製</h2>
     <p class="note">同じ問題数・選択肢数・正答のまま、別のクラス向けに複製します。</p>
@@ -950,7 +968,7 @@ function renderTestList(){
     td.appendChild(dup);
     const del=document.createElement("button");
     del.className="btn-sub"; del.style.cssText="padding:6px 14px;margin-left:6px;color:var(--red);border-color:var(--red);";
-    del.textContent="削除"; del.onclick=()=>deleteTest(t);
+    del.textContent="削除"; del.onclick=()=>openDeleteDialog(t);
     td.appendChild(del);
     tr.appendChild(td);
     body.appendChild(tr);
@@ -1106,6 +1124,45 @@ async function runDuplicate(){
   document.getElementById("dupCard").classList.add("hide");
   renderTestList();
   alert(`複製しました：${grade} ${cls}「${name}」\nテスト一覧から用紙の印刷ができます。`);
+}
+
+/* ---------- 削除（選択ダイアログ方式） ---------- */
+let DEL_TARGET=null;
+
+async function openDeleteDialog(test){
+  DEL_TARGET=test;
+  document.getElementById("delDlgTitle").textContent=`削除：${test.test_name}`;
+  // 採点結果の件数を取得して、何が消えるかを表示
+  const {count}=await sb.from("results").select("id",{count:"exact",head:true}).eq("test_id",test.id);
+  const n=count||0;
+  document.getElementById("delDlgInfo").textContent=
+    `${test.grade} ${test.class_name}・${test.subject}／採点結果 ${n}件`;
+  document.getElementById("delDialog").classList.remove("hide");
+}
+
+async function doDeleteResultsOnly(){
+  const test=DEL_TARGET; if(!test) return;
+  if(!confirm(`「${test.test_name}」の採点結果をすべて削除しますか？\n（テストと正答は残ります）\nこの操作は元に戻せません。`)) return;
+  const {error}=await sb.from("results").delete().eq("test_id",test.id);
+  if(error){ alert("削除エラー: "+error.message); return; }
+  document.getElementById("delDialog").classList.add("hide");
+  document.getElementById("resultCard").classList.add("hide");
+  alert("採点結果を削除しました。テストは残っています。");
+}
+
+async function doDeleteTestAll(){
+  const test=DEL_TARGET; if(!test) return;
+  if(!confirm(`「${test.test_name}」をテストごとすべて削除しますか？\n（テスト・正答・採点結果のすべてが消えます）\nこの操作は元に戻せません。`)) return;
+  await sb.from("results").delete().eq("test_id",test.id);
+  await sb.from("roster").delete().eq("test_id",test.id);
+  const {error}=await sb.from("tests").delete().eq("id",test.id);
+  if(error){ alert("削除エラー: "+error.message); return; }
+  TESTS=TESTS.filter(x=>x.id!==test.id);
+  document.getElementById("delDialog").classList.add("hide");
+  document.getElementById("resultCard").classList.add("hide");
+  renderTestList();
+  fillGradeSelect();
+  alert("テストを削除しました。");
 }
 
 async function deleteTest(test){
