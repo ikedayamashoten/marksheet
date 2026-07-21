@@ -653,6 +653,10 @@ async function startGrading(){
     try{
       if(u.fail) failed++;
       const graded=gradeAnswers(u.answers, test);
+      // 判定が際どかった問題には⚠フラグを付ける（詳細画面で黄色の警告マークとして表示）
+      if(u.unsure && u.unsure.length>0){
+        u.unsure.forEach(q=>{ if(graded.detail[q]) graded.detail[q].warn=true; });
+      }
       const incomplete=isSplit && !(u.has1&&u.has2);
       let sid, seat;
       const readSeat=u.seat;
@@ -669,10 +673,6 @@ async function startGrading(){
       let nameNote="";
       if(u.fail) nameNote="（読取失敗・要確認）";
       else if(incomplete) nameNote="（"+(u.has1?"2":"1")+"枚目が未読取・要確認）";
-      else if(u.unsure && u.unsure.length>0){
-        const list=u.unsure.slice(0,4).map(q=>"第"+q+"問").join("・");
-        nameNote=`（マーク不鮮明: ${list}${u.unsure.length>4?" ほか"+(u.unsure.length-4)+"問":""}・詳細で確認を）`;
-      }
       await sb.from("results").insert({
         test_id:test.id, school_id:SCHOOL.id,
         student_id:sid,
@@ -1016,7 +1016,7 @@ async function saveAnswerKeyEdit(){
   test.answer_key=JSON.parse(JSON.stringify(EDIT_KEY));   // 手元のデータも更新
 
   // 採点済みの結果があるか確認し、再計算するかを毎回選んでもらう
-  const {data:results}=await sb.from("results").select("id,answers,score").eq("test_id",test.id);
+  const {data:results}=await sb.from("results").select("id,answers,score,detail").eq("test_id",test.id);
   if(results && results.length>0){
     const recalc=confirm(
       `正答を保存しました。\n\n`+
@@ -1030,6 +1030,12 @@ async function saveAnswerKeyEdit(){
       let done=0;
       for(const r of results){
         const graded=gradeAnswers(r.answers||{}, test);
+        // ⚠フラグ（マーク不鮮明の印）は再計算後も引き継ぐ
+        if(r.detail){
+          for(const k in r.detail){
+            if(r.detail[k]&&r.detail[k].warn&&graded.detail[k]) graded.detail[k].warn=true;
+          }
+        }
         await sb.from("results").update({score:graded.score, detail:graded.detail}).eq("id",r.id);
         done++;
       }
@@ -1188,7 +1194,9 @@ function buildTeacherDetail(r, test, scoreInput){
       const bd=d.ok?"#1e7e4f":"#c0392b", bg=d.ok?"#e8f5ec":"#fdecec";
       const card=document.createElement("div");
       card.style.cssText=`border:1px solid ${bd};background:${bg};border-radius:8px;padding:6px 8px;font-size:12px;cursor:pointer;`;
-      card.innerHTML=`<b style="color:${bd};">第${q}問 ${d.ok?"○":"×"}</b><br>解答：${esc(got)}${d.ok?"":"<br>正解："+esc(cor)}`;
+      const warn=d.warn?` <span title="マークの読み取りが不鮮明でした。確認してください" style="color:#e6a817;font-size:14px;">⚠</span>`:"";
+      card.innerHTML=`<b style="color:${bd};">第${q}問 ${d.ok?"○":"×"}${warn}</b><br>解答：${esc(got)}${d.ok?"":"<br>正解："+esc(cor)}`;
+      if(d.warn){ card.style.boxShadow="0 0 0 2px #f2c94c"; }
       card.title="クリックして解答を修正";
       card.onclick=()=>openEdit(q, card);
       grid.appendChild(card);
@@ -1219,6 +1227,14 @@ function buildTeacherDetail(r, test, scoreInput){
       const ans=r.answers?JSON.parse(JSON.stringify(r.answers)):{};
       ans[q]=Array.from(sel);
       const graded=gradeAnswers(ans, test);
+      // ⚠フラグを引き継ぐ（修正したこの問題の⚠は「確認済み」として消す）
+      if(r.detail){
+        for(const k in r.detail){
+          if(String(k)!==String(q) && r.detail[k] && r.detail[k].warn && graded.detail[k]){
+            graded.detail[k].warn=true;
+          }
+        }
+      }
       const {error}=await sb.from("results").update({answers:ans, detail:graded.detail, score:graded.score}).eq("id",r.id);
       if(error){ alert("保存エラー: "+error.message); return; }
       r.answers=ans; r.detail=graded.detail; r.score=graded.score;
