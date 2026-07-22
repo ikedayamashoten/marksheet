@@ -1282,6 +1282,88 @@ function downloadCsv(){
   URL.revokeObjectURL(a.href);
 }
 
+/* 生徒の個人票を印刷（1人1ページ。返却用） */
+function printReports(rows){
+  const test=CURRENT_RESULT_TEST;
+  if(!test||!rows||rows.length===0){ alert("印刷する結果がありません"); return; }
+  const Q=test.num_questions;
+  let pages="";
+  rows.forEach(r=>{
+    // 問題ごとのカード
+    let cells="";
+    for(let q=1;q<=Q;q++){
+      const d=r.detail?r.detail[q]:null;
+      if(!d){
+        cells+=`<div class="qc"><b>第${q}問</b><br>－</div>`;
+        continue;
+      }
+      const got=(d.got&&d.got.length)?d.got.join("・"):"無解答";
+      const cor=(d.correct||d.cor||[]).join("・");
+      cells+=`<div class="qc ${d.ok?'ok':'ng'}">
+        <b>第${q}問 ${d.ok?"○":"×"}</b><br>
+        <span>解答：${esc(got)}</span>${d.ok?"":"<br><span>正解："+esc(cor)+"</span>"}
+      </div>`;
+    }
+    const pct=r.total?Math.round(r.score/r.total*100):0;
+    pages+=`
+    <div class="page">
+      <div class="head">
+        <div class="ttl">成績個人票</div>
+        <div class="sub">${esc(test.subject)}　${esc(test.test_name)}</div>
+      </div>
+      <table class="info">
+        <tr>
+          <td>学年：${esc(r.grade||test.grade)}</td>
+          <td>クラス：${esc(r.class_name||test.class_name)}</td>
+          <td>出席番号：<b>${esc(r.seat_number||"")}</b></td>
+          <td>氏名：＿＿＿＿＿＿＿＿＿＿＿＿</td>
+        </tr>
+      </table>
+      <div class="scorebox">
+        <span class="score">${r.score}</span><span class="total"> ／ ${r.total} 点</span>
+        <span class="pct">（正答率 ${pct}%）</span>
+      </div>
+      <div class="grid">${cells}</div>
+      <div class="foot">マークシート自動採点システム powered by 敷島書店</div>
+    </div>`;
+  });
+  const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+    <title>個人票 ${test.subject} ${test.test_name}</title>
+    <style>
+      @page{size:A4 portrait;margin:14mm;}
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      body{font-family:'Yu Gothic','Hiragino Sans',sans-serif;color:#000;margin:0;background:#e5e5e5;}
+      .page{background:#fff;max-width:760px;margin:0 auto 12px;padding:28px 30px;page-break-after:always;}
+      .page:last-child{page-break-after:auto;}
+      .head{text-align:center;margin-bottom:14px;}
+      .ttl{font-size:22px;font-weight:bold;}
+      .sub{font-size:15px;margin-top:4px;}
+      .info{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px;}
+      .info td{border:1px solid #000;padding:8px;}
+      .scorebox{text-align:center;border:2px solid #000;border-radius:10px;padding:10px;margin-bottom:14px;}
+      .score{font-size:34px;font-weight:bold;}
+      .total{font-size:16px;}
+      .pct{font-size:13px;color:#444;margin-left:10px;}
+      .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:5px;}
+      .qc{border:1px solid #bbb;border-radius:6px;padding:4px 6px;font-size:10.5px;line-height:1.35;}
+      .qc b{font-size:11px;}
+      .qc.ok{border-color:#1e7e4f;background:#eef7f1;}
+      .qc.ng{border-color:#c0392b;background:#fdf0ef;}
+      .foot{text-align:center;font-size:10px;color:#999;margin-top:16px;}
+      .printbtn{padding:14px;text-align:center;background:#fff;}
+      @media print{.printbtn{display:none;} body{background:#fff;} .page{margin:0 auto;}}
+    </style></head><body>
+    <div class="printbtn">
+      <button onclick="window.print()" style="padding:10px 20px;font-size:14px;cursor:pointer;background:#1a2747;color:#fff;border:none;border-radius:8px;">個人票を印刷／PDF保存する</button>
+      <span style="font-size:13px;color:#555;margin-left:10px;">全${rows.length}名分（1人1ページ・出席番号順）</span>
+    </div>
+    ${pages}
+    </body></html>`;
+  const w=window.open("","_blank");
+  if(!w){ alert("ポップアップがブロックされました。ブラウザのアドレス欄のブロック表示から、このサイトのポップアップを許可してください。"); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
 async function deleteAllResults(testId){
   const test=CURRENT_RESULT_TEST;
   if(!confirm(`このテストの採点結果をすべて削除しますか？\n（テスト自体と正答は残ります。採点をやり直したいときに使います）\nこの操作は元に戻せません。`)) return;
@@ -1298,8 +1380,9 @@ async function showResults(test){
   const reportCount=(data||[]).filter(r=>r.report_flag).length;
   const badge=reportCount>0?` <span style="background:var(--red);color:#fff;font-size:12px;padding:3px 10px;border-radius:20px;">⚠ ${reportCount}件の報告</span>`:"";
   const csvBtn=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;margin-left:10px;" onclick="downloadCsv()">CSVダウンロード</button>`:"";
+  const reportBtn=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;margin-left:6px;" onclick="printReports(LAST_RESULTS)">個人票を印刷（全員分）</button>`:"";
   const bulkDel=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;color:var(--red);border-color:var(--red);margin-left:6px;" onclick="deleteAllResults('${test.id}')">採点結果を全削除</button>`:"";
-  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}${csvBtn}${bulkDel}`;
+  document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}${csvBtn}${reportBtn}${bulkDel}`;
   CURRENT_RESULT_TEST=test;
   LAST_RESULTS=data||[];
   // 結果の場所まで自動でスクロール
@@ -1342,6 +1425,12 @@ async function showResults(test){
     det.className="btn-sub"; det.style.cssText="padding:6px 14px;margin-left:6px;";
     det.textContent="詳細";
     tdBtn.appendChild(det);
+    // 個人票（この生徒だけ印刷）
+    const rep=document.createElement("button");
+    rep.className="btn-sub"; rep.style.cssText="padding:6px 12px;margin-left:6px;font-size:12px;";
+    rep.textContent="個人票";
+    rep.onclick=()=>printReports([r]);
+    tdBtn.appendChild(rep);
     // この生徒の結果を削除
     const rdel=document.createElement("button");
     rdel.className="btn-sub"; rdel.style.cssText="padding:6px 10px;margin-left:6px;color:var(--red);border-color:var(--red);font-size:12px;";
