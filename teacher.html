@@ -174,7 +174,7 @@
   <div class="card hide" id="resultCard">
     <h2 id="resultTitle">採点結果</h2>
     <table>
-      <thead><tr><th>学年</th><th>クラス</th><th>出席番号</th><th>氏名</th><th>ID</th><th>得点</th><th>満点</th><th></th></tr></thead>
+      <thead><tr><th><input type="checkbox" title="全員を選択/解除" onclick="toggleAllRep(this)"></th><th>学年</th><th>クラス</th><th>出席番号</th><th>氏名</th><th>ID</th><th>得点</th><th>満点</th><th></th></tr></thead>
       <tbody id="resultBody"></tbody>
     </table>
   </div>
@@ -230,7 +230,7 @@ function buildAnswerKey(){
   if(!qn||qn<1){ alert("問題数を入力してください"); return; }
   CUR_AKEY={};
   const box=document.getElementById("akeyBox"); box.innerHTML="";
-  const labels="ABCDEFGHIJ".split("");
+  const labels=NUM_LABELS;
   for(let q=1;q<=qn;q++){
     CUR_AKEY[q]=[];
     const div=document.createElement("div"); div.className="q";
@@ -311,6 +311,20 @@ async function saveTest(){
    紙を 横1000 × 縦1414 の座標で表す（A4の縦横比）
    ========================================================== */
 const SHEET_W=1000, SHEET_H=1414;
+
+/* マークの記号：新しく作るテストは数字（1〜5）、
+   既存のABCD方式で保存されたテストは自動判別してABCDのまま扱う */
+const NUM_LABELS=["1","2","3","4","5","6","7","8","9","10"];
+function labelsFor(test){
+  try{
+    for(const k in test.answer_key){
+      for(const v of (test.answer_key[k]||[])){
+        if(/[A-J]/.test(String(v))) return "ABCDEFGHIJ".split("");  // 旧方式（ABCD）
+      }
+    }
+  }catch(e){}
+  return NUM_LABELS;   // 新方式（数字）
+}
 // 四隅の位置合わせマーカー（黒い四角）の中心座標とサイズ
 const MARKERS=[{x:55,y:55},{x:945,y:55},{x:55,y:1359},{x:945,y:1359}];
 const MARKER_SIZE=36;
@@ -381,7 +395,7 @@ function splitOf(Q, C){
 /* ---------- マークシート印刷（OMR対応・四隅マーカー付き） ---------- */
 async function printSheet(testArg){
   const t=testArg || SAVED_TEST; if(!t){ alert("先にテストを保存してください"); return; }
-  const labels="ABCDEFGHIJ".split("");
+  const labels=labelsFor(t);
   const Q=t.num_questions, C=t.num_choices;
   // 円が小さくなりすぎる構成は自動で2枚組にする（1枚目に前半、2枚目に後半）
   const split=splitOf(Q,C);
@@ -830,7 +844,7 @@ function omrRead(canvas, test){
 
   // 各マーク円を測る（行マークの補正を加えた正確な位置で）
   // 判定は3条件：①内側の黒率 ②実際の濃さ（消し跡・薄い汚れを除外） ③すぐ外側との対比（隣の塗りの映り込みを除外）
-  const labels="ABCDEFGHIJ".split("");
+  const labels=labelsFor(test);
   const answers={};
   const unsure=[];   // 判定が際どかった問題（要確認として結果に表示）
   const measureCircle=(cx,cy,rIn,rOut)=>{
@@ -982,7 +996,7 @@ function editAnswerKey(test){
   for(let q=1;q<=test.num_questions;q++){
     EDIT_KEY[q]=(test.answer_key[q]||[]).slice();
   }
-  const labels="ABCDEFGHIJ".split("");
+  const labels=labelsFor(test);
   document.getElementById("akeyEditTitle").textContent=
     `正答の確認・修正：${test.test_name}（${test.subject}）`;
   const box=document.getElementById("akeyEditBox"); box.innerHTML="";
@@ -1175,7 +1189,7 @@ async function deleteTest(test){
 
 /* 先生用：問題ごとの正誤詳細（クリックで生徒の解答を修正でき、点数も自動更新） */
 function buildTeacherDetail(r, test, scoreInput){
-  const labels="ABCDEFGHIJ".split("");
+  const labels=labelsFor(test);
   const wrap=document.createElement("div");
   const note=document.createElement("div");
   note.style.cssText="font-size:12px;color:#888;padding:4px 0;";
@@ -1282,6 +1296,19 @@ function downloadCsv(){
   URL.revokeObjectURL(a.href);
 }
 
+/* 一括選択のための関数 */
+function toggleAllRep(cb){
+  document.querySelectorAll(".repchk").forEach(c=>{ c.checked=cb.checked; });
+}
+function printSelectedReports(){
+  const idx=[...document.querySelectorAll(".repchk:checked")].map(c=>+c.dataset.i);
+  if(idx.length===0){
+    if(confirm("生徒が選択されていません。全員分の個人票を印刷しますか？")) printReports(LAST_RESULTS);
+    return;
+  }
+  printReports(idx.map(i=>LAST_RESULTS[i]));
+}
+
 /* 生徒の個人票を印刷（1人1ページ。返却用） */
 function printReports(rows){
   const test=CURRENT_RESULT_TEST;
@@ -1380,7 +1407,7 @@ async function showResults(test){
   const reportCount=(data||[]).filter(r=>r.report_flag).length;
   const badge=reportCount>0?` <span style="background:var(--red);color:#fff;font-size:12px;padding:3px 10px;border-radius:20px;">⚠ ${reportCount}件の報告</span>`:"";
   const csvBtn=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;margin-left:10px;" onclick="downloadCsv()">CSVダウンロード</button>`:"";
-  const reportBtn=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;margin-left:6px;" onclick="printReports(LAST_RESULTS)">個人票を印刷（全員分）</button>`:"";
+  const reportBtn=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;margin-left:6px;" onclick="printSelectedReports()">個人票を印刷（選択した生徒）</button>`:"";
   const bulkDel=(data&&data.length>0)?` <button class="btn-sub" style="padding:5px 12px;font-size:12px;color:var(--red);border-color:var(--red);margin-left:6px;" onclick="deleteAllResults('${test.id}')">採点結果を全削除</button>`:"";
   document.getElementById("resultTitle").innerHTML=`採点結果：${esc(test.test_name)}（${esc(test.subject)}）${badge}${csvBtn}${reportBtn}${bulkDel}`;
   CURRENT_RESULT_TEST=test;
@@ -1388,7 +1415,7 @@ async function showResults(test){
   // 結果の場所まで自動でスクロール
   setTimeout(()=>card.scrollIntoView({behavior:"smooth"}), 50);
   const body=document.getElementById("resultBody"); body.innerHTML="";
-  (data||[]).forEach(r=>{
+  (data||[]).forEach((r,rIdx)=>{
     const tr=document.createElement("tr");
     if(r.report_flag) tr.style.background="#fcecec";
     // 氏名セル（報告バッジ・コメント付き）
@@ -1397,7 +1424,7 @@ async function showResults(test){
       nameHtml+=`<div style="margin-top:4px;"><span style="background:var(--red);color:#fff;font-size:11px;padding:2px 8px;border-radius:20px;">⚠ 採点ミスの報告あり</span></div>`;
       if(r.report_message) nameHtml+=`<div style="font-size:12px;color:var(--red);margin-top:3px;">「${esc(r.report_message)}」</div>`;
     }
-    tr.innerHTML=`<td>${esc(r.grade||"")}</td><td>${esc(r.class_name||"")}</td><td>${esc(r.seat_number||"")}</td><td>${nameHtml}</td><td>${esc(r.student_id)}</td>`;
+    tr.innerHTML=`<td><input type="checkbox" class="repchk" data-i="${rIdx}"></td><td>${esc(r.grade||"")}</td><td>${esc(r.class_name||"")}</td><td>${esc(r.seat_number||"")}</td><td>${nameHtml}</td><td>${esc(r.student_id)}</td>`;
     const tdScore=document.createElement("td");
     const inp=document.createElement("input"); inp.type="number"; inp.className="score-edit"; inp.value=r.score;
     tdScore.appendChild(inp); tr.appendChild(tdScore);
@@ -1449,7 +1476,7 @@ async function showResults(test){
     const detTr=document.createElement("tr");
     detTr.classList.add("hide");
     const detTd=document.createElement("td");
-    detTd.colSpan=8;
+    detTd.colSpan=9;
     detTd.style.cssText="background:#fafafa;";
     detTd.appendChild(buildTeacherDetail(r, test, inp));
     detTr.appendChild(detTd);
